@@ -312,14 +312,20 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (id?.startsWith("SIM-")) {
         // Simulated tickets: save the reply so the simulated customer can answer it
         setState((prev) => ({ ...prev, composeText: "" }));
-        fetch(`/api/helpdesk/sim/tickets/${id}/messages`, {
+        // Email tickets: really sends to the customer (password-protected route)
+        const isEmail = ticketDetail?.ticket.id === id && ticketDetail.ticket.tags === "email";
+        fetch(isEmail ? `/api/helpdesk/email/tickets/${id}/reply` : `/api/helpdesk/sim/tickets/${id}/messages`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ author: "agent", body: content, sender: "You" }),
         }).then(async (res) => {
-          if (res.ok && selectedRef.current === id) {
-            applyDetail((await res.json()) as TicketDetail, true);
+          if (!res.ok) {
+            const err = (await res.json().catch(() => null)) as { error?: string } | null;
+            setState((prev) => (prev.composeText ? prev : { ...prev, composeText: content }));
+            window.alert(`Reply not sent: ${err?.error ?? `HTTP ${res.status}`}`);
+            return;
           }
+          if (selectedRef.current === id) applyDetail((await res.json()) as TicketDetail, true);
         });
         return;
       }
@@ -341,7 +347,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         composeText: "", // Clear compose after sending
       }));
     },
-    [applyDetail],
+    [applyDetail, ticketDetail],
   );
 
   // Ticket status

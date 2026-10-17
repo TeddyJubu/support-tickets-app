@@ -133,6 +133,9 @@ function toTicket(r: Row): Ticket {
   };
 }
 
+// Real inbound-email senders use source_key "email:<sha256>"; simulator personas use a bare hash
+const isEmailCustomer = (r: Row) => String(r.source_key ?? "").startsWith("email:");
+
 function toCustomer(r: Row): Customer {
   return {
     id: String(r.customer_id ?? r.id),
@@ -152,8 +155,8 @@ function toCustomer(r: Row): Customer {
     acceptsSms: false,
     totalSpent: n(r.total_spent),
     totalOrders: n(r.total_orders),
-    note: "Simulated customer (pseudonym)",
-    tags: "simulated",
+    note: isEmailCustomer(r) ? "Emailed support@teddyonfriday.com" : "Simulated customer (pseudonym)",
+    tags: isEmailCustomer(r) ? "email" : "simulated",
     taxExempt: false,
   };
 }
@@ -260,7 +263,9 @@ export function upsertSimCustomer(input: SimCustomerInput) {
       .run(input.totalSpent ?? 0, input.totalOrders ?? 0, input.storeCustomerId ?? null, String(existing.id));
     return String(existing.id);
   }
-  const id = `simcust-${input.sourceKey.slice(0, 12)}`;
+  const id = input.sourceKey.startsWith("email:")
+    ? `email-${input.sourceKey.slice(6, 30)}`
+    : `simcust-${input.sourceKey.slice(0, 12)}`;
   getDb()
     .prepare(
       `INSERT INTO sim_customers (id, source_key, first_name, last_name, email, phone, city, province, country,
@@ -401,4 +406,25 @@ export function ingestEmail(input: SimTicketInput & { messageId: string; refs: s
   }
   d.prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(input.messageId, ticketId);
   return { ticketId, created, duplicate: false };
+}
+
+export function recordEmailId(messageId: string, ticketId: string) {
+  getDb().prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(messageId, ticketId);
+}
+
+// Who to reply to on an email ticket, plus the thread's Message-IDs (oldest first) for threading headers
+export function emailThread(ticketId: string) {
+  const d = getDb();
+  const r = d
+    .prepare(
+      `SELECT t.subject, t.tags, c.email, c.source_key FROM sim_tickets t
+       JOIN sim_customers c ON c.id = t.customer_id WHERE t.id = ?`,
+    )
+    .get(ticketId) as Row | undefined;
+  const to = s(r?.email);
+  if (!r || r.tags !== "email" || !isEmailCustomer(r) || !to || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to)) return null;
+  const messageIds = (d.prepare(`SELECT message_id FROM sim_email_ids WHERE ticket_id = ? ORDER BY rowid`).all(ticketId) as Row[])
+    .map((m) => String(m.message_id))
+    .filter((m) => m.startsWith("<"));
+  return { to, subject: String(r.subject ?? "(no subject)"), messageIds };
 }

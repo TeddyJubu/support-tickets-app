@@ -1,14 +1,15 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import PostalMime from "postal-mime";
 import { ingestEmail } from "@/lib/sim-db";
+import { getInboundEmail } from "@/lib/aws-email";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // AWS SES (support@teddyonfriday.com, us-west-2) -> SNS topic helpdesk-inbound-email
-// (raw MIME, base64) -> this route -> new ticket, or a reply on the existing thread.
+// (S3 bucket + notification) -> this route -> new ticket, or a reply on the existing thread.
 // ponytail: auth is a secret ?token= in the SNS subscription URL plus a TopicArn match;
-// add SNS signature verification if the URL could leak. SES->SNS caps mail at 150 KB.
+// add SNS signature verification if the URL could leak.
 const ok = (info?: object) => Response.json(info ?? {}, { status: 200 });
 
 function tokenMatches(given: string) {
@@ -46,11 +47,18 @@ export async function POST(request: Request) {
 
   const msg = JSON.parse(sns.Message);
   const receipt = msg.receipt ?? {};
-  if (receipt.spamVerdict?.status === "FAIL" || receipt.virusVerdict?.status === "FAIL" || !msg.content) {
-    return ok({ dropped: true });
-  }
+  if (receipt.spamVerdict?.status === "FAIL" || receipt.virusVerdict?.status === "FAIL") return ok({ dropped: true });
 
-  const mail = await PostalMime.parse(Buffer.from(msg.content, "base64"));
+  // S3 action: the email is in the bucket (any size). Legacy SNS action: base64 content inline.
+  const action = receipt.action ?? {};
+  const raw =
+    action.type === "S3"
+      ? await getInboundEmail(action.bucketName, action.objectKey)
+      : msg.content
+        ? Buffer.from(msg.content, "base64")
+        : null;
+  if (!raw) return ok({ dropped: true });
+  const mail = await PostalMime.parse(raw);
   const from = mail.from?.address?.toLowerCase();
   if (!from) return ok({ dropped: true });
   const [firstName, ...rest] = (mail.from?.name || from.split("@")[0]).trim().split(/\s+/);
@@ -60,7 +68,7 @@ export async function POST(request: Request) {
   const body = (stripQuoted(text) || text.trim()).slice(0, 20000) || "(empty message)";
 
   const result = ingestEmail({
-    customer: { sourceKey: createHash("sha256").update(from).digest("hex"), firstName, lastName: rest.join(" "), email: from },
+    customer: { sourceKey: `email:${createHash("sha256").update(from).digest("hex")}`, firstName, lastName: rest.join(" "), email: from },
     subject: (mail.subject || "(no subject)").slice(0, 300),
     body: attachments.length ? `${body}\n\n[Attachments not imported: ${attachments.join(", ")}]` : body,
     tags: "email",
