@@ -1,7 +1,8 @@
 // Writable store for simulated tickets (data/sim.db).
 // The simulator (scripts/simulate.mjs) creates tickets and customer messages
 // through app/api/helpdesk/sim/*; agents reply from the UI.
-// Customers here are pseudonyms: no real names or emails are stored.
+// Simulator customers are pseudonyms. Real inbound email (app/api/helpdesk/inbound/ses)
+// also lands here, with the sender's real name and address.
 
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -60,6 +61,11 @@ function getDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS sim_messages_ticket ON sim_messages(ticket_id);
+
+    CREATE TABLE IF NOT EXISTS sim_email_ids (
+      message_id TEXT PRIMARY KEY,     -- Message-ID of an inbound email
+      ticket_id TEXT REFERENCES sim_tickets(id)
+    );
   `);
   return db;
 }
@@ -109,7 +115,7 @@ function toTicket(r: Row): Ticket {
   return {
     ...toSummary(r),
     channel: "email",
-    integration: "Simulator",
+    integration: r.tags === "email" ? "Email (support@teddyonfriday.com)" : "Simulator",
     createdByAgent: false,
     assigneeName: null,
     assigneeEmail: null,
@@ -361,4 +367,38 @@ export function isSimOrder(orderName: string) {
   return Boolean(
     getDb().prepare(`SELECT 1 FROM sim_tickets WHERE order_name = ? LIMIT 1`).get(orderName),
   );
+}
+
+// Inbound email: one ticket per thread. A known Message-ID is a no-op (SNS retries);
+// In-Reply-To/References, or same sender + same subject on a non-closed ticket, appends.
+const baseSubject = (v: string) => v.replace(/^\s*((re|fwd?|aw)\s*:\s*)+/i, "").trim().toLowerCase();
+
+export function ingestEmail(input: SimTicketInput & { messageId: string; refs: string[] }) {
+  const d = getDb();
+  const known = (id: string) =>
+    (d.prepare(`SELECT ticket_id FROM sim_email_ids WHERE message_id = ?`).get(id) as Row | undefined)?.ticket_id as
+      | string
+      | undefined;
+  const dup = known(input.messageId);
+  if (dup) return { ticketId: dup, created: false, duplicate: true };
+
+  let ticketId = input.refs.map(known).find(Boolean);
+  if (!ticketId) {
+    const open = d
+      .prepare(
+        `SELECT t.id, t.subject FROM sim_tickets t JOIN sim_customers c ON c.id = t.customer_id
+         WHERE c.source_key = ? AND t.status != 'closed' ORDER BY t.seq DESC`,
+      )
+      .all(input.customer.sourceKey) as Row[];
+    ticketId = open.find((t) => baseSubject(String(t.subject)) === baseSubject(input.subject))?.id as string | undefined;
+  }
+
+  const created = !ticketId;
+  if (ticketId) {
+    addSimMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim());
+  } else {
+    ticketId = createSimTicket(input);
+  }
+  d.prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(input.messageId, ticketId);
+  return { ticketId, created, duplicate: false };
 }
