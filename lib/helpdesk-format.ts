@@ -69,3 +69,50 @@ export function formatIntent(intent: string | null | undefined) {
     .filter((p) => p && p !== "Other")
     .join(" · ") || intent;
 }
+
+// Compact "time ago" for lists: "now", "5m", "3h", "Yesterday", "Oct 16", "Oct 16, 2024"
+export function formatRelative(value: string | null | undefined, now = new Date()) {
+  const d = parseExportDate(value);
+  if (!d) return "—";
+  const minutes = Math.floor((now.getTime() - d.getTime()) / 60000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 24 * 60 && d.getDate() === now.getDate()) return `${Math.floor(minutes / 60)}h`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+// Conversation day dividers: "Today", "Yesterday", "Thursday, Oct 16"
+export function formatDay(value: string | null | undefined, now = new Date()) {
+  const d = parseExportDate(value);
+  if (!d) return null;
+  if (d.toDateString() === now.toDateString()) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+export function formatDateTime(value: string | null | undefined) {
+  const d = parseExportDate(value);
+  return d
+    ? d.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "—";
+}

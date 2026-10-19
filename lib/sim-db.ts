@@ -1,7 +1,8 @@
 // Writable store for simulated tickets (data/sim.db).
 // The simulator (scripts/simulate.mjs) creates tickets and customer messages
 // through app/api/helpdesk/sim/*; agents reply from the UI.
-// Customers here are pseudonyms: no real names or emails are stored.
+// Simulator customers are pseudonyms. Real inbound email (app/api/helpdesk/inbound/ses)
+// also lands here, with the sender's real name and address.
 
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -60,6 +61,23 @@ function getDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS sim_messages_ticket ON sim_messages(ticket_id);
+
+    CREATE TABLE IF NOT EXISTS sim_email_ids (
+      message_id TEXT PRIMARY KEY,     -- Message-ID of an inbound email
+      ticket_id TEXT REFERENCES sim_tickets(id)
+    );
+
+    -- Agent email replies, keyed by the client's idempotency key, so a retry never emails twice
+    CREATE TABLE IF NOT EXISTS sim_email_outbox (
+      idem_key TEXT PRIMARY KEY,
+      ticket_id TEXT REFERENCES sim_tickets(id),
+      body TEXT,
+      status TEXT DEFAULT 'sending',   -- sending | sent | failed (SES rejected it; safe to resend)
+      message_id TEXT,                 -- SES Message-ID once SES accepted it
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   return db;
 }
@@ -102,6 +120,7 @@ function toSummary(r: Row): TicketSummary {
     customerMessages: c.customer,
     simulated: true,
     status: s(r.status),
+    updatedAt: iso(r.updated_at),
   };
 }
 
@@ -109,7 +128,7 @@ function toTicket(r: Row): Ticket {
   return {
     ...toSummary(r),
     channel: "email",
-    integration: "Simulator",
+    integration: r.tags === "email" ? "Email (support@teddyonfriday.com)" : "Simulator",
     createdByAgent: false,
     assigneeName: null,
     assigneeEmail: null,
@@ -126,6 +145,9 @@ function toTicket(r: Row): Ticket {
     sourceTicketId: s(r.source_ticket_id),
   };
 }
+
+// Real inbound-email senders use source_key "email:<sha256>"; simulator personas use a bare hash
+const isEmailCustomer = (r: Row) => String(r.source_key ?? "").startsWith("email:");
 
 function toCustomer(r: Row): Customer {
   return {
@@ -146,8 +168,8 @@ function toCustomer(r: Row): Customer {
     acceptsSms: false,
     totalSpent: n(r.total_spent),
     totalOrders: n(r.total_orders),
-    note: "Simulated customer (pseudonym)",
-    tags: "simulated",
+    note: isEmailCustomer(r) ? "Emailed support@teddyonfriday.com" : "Simulated customer (pseudonym)",
+    tags: isEmailCustomer(r) ? "email" : "simulated",
     taxExempt: false,
   };
 }
@@ -157,19 +179,29 @@ const TICKET_SELECT = `SELECT t.*, c.first_name, c.last_name, c.email
 
 export function listSimTickets({
   q = "",
+  status = "",
   offset = 0,
   limit = 50,
 }: {
   q?: string;
+  /** open | pending | closed; empty for all */
+  status?: string;
   offset?: number;
   limit?: number;
 }) {
   const like = `%${q.trim().toLowerCase()}%`;
-  const where = q.trim()
-    ? `WHERE lower(t.id) LIKE ? OR lower(t.subject) LIKE ? OR lower(c.first_name || ' ' || c.last_name) LIKE ?
-       OR lower(c.email) LIKE ? OR lower(coalesce(t.order_name, '')) LIKE ?`
-    : "";
-  const params = q.trim() ? [like, like, like, like, like] : [];
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (q.trim()) {
+    clauses.push(`(lower(t.id) LIKE ? OR lower(t.subject) LIKE ? OR lower(c.first_name || ' ' || c.last_name) LIKE ?
+       OR lower(c.email) LIKE ? OR lower(coalesce(t.order_name, '')) LIKE ?)`);
+    params.push(like, like, like, like, like);
+  }
+  if (["open", "pending", "closed"].includes(status)) {
+    clauses.push(`t.status = ?`);
+    params.push(status);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const total = n(
     getDb()
       .prepare(`SELECT count(*) AS c FROM sim_tickets t LEFT JOIN sim_customers c ON c.id = t.customer_id ${where}`)
@@ -254,7 +286,9 @@ export function upsertSimCustomer(input: SimCustomerInput) {
       .run(input.totalSpent ?? 0, input.totalOrders ?? 0, input.storeCustomerId ?? null, String(existing.id));
     return String(existing.id);
   }
-  const id = `simcust-${input.sourceKey.slice(0, 12)}`;
+  const id = input.sourceKey.startsWith("email:")
+    ? `email-${input.sourceKey.slice(6, 30)}`
+    : `simcust-${input.sourceKey.slice(0, 12)}`;
   getDb()
     .prepare(
       `INSERT INTO sim_customers (id, source_key, first_name, last_name, email, phone, city, province, country,
@@ -283,7 +317,8 @@ export interface SimTicketInput {
 
 export function createSimTicket(input: SimTicketInput) {
   const d = getDb();
-  d.exec("BEGIN");
+  // A savepoint, so this also works inside ingestEmail's transaction
+  d.exec("SAVEPOINT create_ticket");
   try {
     const customerId = upsertSimCustomer(input.customer);
     const res = d
@@ -302,10 +337,11 @@ export function createSimTicket(input: SimTicketInput) {
       `${input.customer.firstName} ${input.customer.lastName}`,
       input.body,
     );
-    d.exec("COMMIT");
+    d.exec("RELEASE create_ticket");
     return id;
   } catch (err) {
-    d.exec("ROLLBACK");
+    d.exec("ROLLBACK TO create_ticket");
+    d.exec("RELEASE create_ticket");
     throw err;
   }
 }
@@ -361,4 +397,140 @@ export function isSimOrder(orderName: string) {
   return Boolean(
     getDb().prepare(`SELECT 1 FROM sim_tickets WHERE order_name = ? LIMIT 1`).get(orderName),
   );
+}
+
+// Inbound email: one ticket per thread. A known Message-ID is a no-op (SNS retries);
+// In-Reply-To/References, or same sender + same subject on a non-closed ticket, appends.
+const baseSubject = (v: string) => v.replace(/^\s*((re|fwd?|aw)\s*:\s*)+/i, "").trim().toLowerCase();
+
+export function ingestEmail(input: SimTicketInput & { messageId: string; refs: string[] }) {
+  const d = getDb();
+  const known = (id: string) =>
+    (d.prepare(`SELECT ticket_id FROM sim_email_ids WHERE message_id = ?`).get(id) as Row | undefined)?.ticket_id as
+      | string
+      | undefined;
+  const dup = known(input.messageId);
+  if (dup) return { ticketId: dup, created: false, duplicate: true };
+
+  let ticketId = input.refs.map(known).find(Boolean);
+  if (!ticketId) {
+    const open = d
+      .prepare(
+        `SELECT t.id, t.subject FROM sim_tickets t JOIN sim_customers c ON c.id = t.customer_id
+         WHERE c.source_key = ? AND t.status != 'closed' ORDER BY t.seq DESC`,
+      )
+      .all(input.customer.sourceKey) as Row[];
+    ticketId = open.find((t) => baseSubject(String(t.subject)) === baseSubject(input.subject))?.id as string | undefined;
+  }
+
+  const created = !ticketId;
+  // Message and Message-ID commit together, so an SNS retry after a crash can't append twice
+  d.exec("SAVEPOINT ingest_email");
+  try {
+    if (ticketId) {
+      addSimMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim());
+    } else {
+      ticketId = createSimTicket(input);
+    }
+    d.prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(input.messageId, ticketId);
+    d.exec("RELEASE ingest_email");
+  } catch (err) {
+    d.exec("ROLLBACK TO ingest_email");
+    d.exec("RELEASE ingest_email");
+    throw err;
+  }
+  return { ticketId, created, duplicate: false };
+}
+
+export function recordEmailId(messageId: string, ticketId: string) {
+  getDb().prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(messageId, ticketId);
+}
+
+// Outbox for agent email replies. The row is written before SES is called, so a retry with
+// the same key can tell whether the email already went out:
+//   send    - new key, or SES rejected the last attempt: the caller sends now
+//   sent    - already emailed and saved: return the saved ticket
+//   unsaved - SES accepted it but saving failed: save it now, don't send again
+//   unknown - another request is sending it, or a crash left the outcome unknown: don't send
+//   conflict - the key was used for a different reply
+export type EmailReplyClaim =
+  | { state: "send" | "unknown" | "conflict" }
+  | { state: "sent"; detail: TicketDetail | null }
+  | { state: "unsaved"; messageId: string };
+
+export function claimEmailReply(key: string, ticketId: string, body: string): EmailReplyClaim {
+  const d = getDb();
+  // Single statements, so two requests (or processes) racing on one key can't both claim it
+  const inserted = d
+    .prepare(`INSERT OR IGNORE INTO sim_email_outbox (idem_key, ticket_id, body) VALUES (?, ?, ?)`)
+    .run(key, ticketId, body);
+  if (inserted.changes > 0) return { state: "send" };
+  const row = d.prepare(`SELECT * FROM sim_email_outbox WHERE idem_key = ?`).get(key) as Row;
+  if (row.ticket_id !== ticketId || row.body !== body) return { state: "conflict" };
+  if (row.status === "sent") return { state: "sent", detail: getSimTicketDetail(ticketId) };
+  if (row.message_id) return { state: "unsaved", messageId: String(row.message_id) };
+  const retried = d
+    .prepare(
+      `UPDATE sim_email_outbox SET status = 'sending', error = NULL, updated_at = datetime('now')
+       WHERE idem_key = ? AND status = 'failed'`,
+    )
+    .run(key);
+  return { state: retried.changes > 0 ? "send" : "unknown" };
+}
+
+export function failEmailReply(key: string, error: string) {
+  getDb()
+    .prepare(
+      `UPDATE sim_email_outbox SET status = 'failed', error = ?, updated_at = datetime('now')
+       WHERE idem_key = ? AND status = 'sending' AND message_id IS NULL`,
+    )
+    .run(error.slice(0, 500), key);
+}
+
+// After SES accepted the reply: mark it sent and add the agent message together
+export function completeEmailReply(key: string, ticketId: string, messageId: string, body: string, sender: string) {
+  const d = getDb();
+  d.exec("SAVEPOINT complete_email_reply");
+  try {
+    const res = d
+      .prepare(
+        `UPDATE sim_email_outbox SET status = 'sent', message_id = ?, error = NULL, updated_at = datetime('now')
+         WHERE idem_key = ? AND status != 'sent'`,
+      )
+      .run(messageId, key);
+    if (res.changes === 0) throw new Error("Outbox row missing or already sent");
+    recordEmailId(messageId, ticketId);
+    const detail = addSimMessage(ticketId, "agent", body, sender);
+    if (!detail) throw new Error(`Ticket ${ticketId} not found`);
+    d.exec("RELEASE complete_email_reply");
+    return detail;
+  } catch (err) {
+    d.exec("ROLLBACK TO complete_email_reply");
+    d.exec("RELEASE complete_email_reply");
+    // Keep at least the Message-ID, so a retry saves the reply instead of emailing it again
+    try {
+      d.prepare(`UPDATE sim_email_outbox SET message_id = ?, updated_at = datetime('now') WHERE idem_key = ?`).run(
+        messageId,
+        key,
+      );
+    } catch {}
+    throw err;
+  }
+}
+
+// Who to reply to on an email ticket, plus the thread's Message-IDs (oldest first) for threading headers
+export function emailThread(ticketId: string) {
+  const d = getDb();
+  const r = d
+    .prepare(
+      `SELECT t.subject, t.tags, c.email, c.source_key FROM sim_tickets t
+       JOIN sim_customers c ON c.id = t.customer_id WHERE t.id = ?`,
+    )
+    .get(ticketId) as Row | undefined;
+  const to = s(r?.email);
+  if (!r || r.tags !== "email" || !isEmailCustomer(r) || !to || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to)) return null;
+  const messageIds = (d.prepare(`SELECT message_id FROM sim_email_ids WHERE ticket_id = ? ORDER BY rowid`).all(ticketId) as Row[])
+    .map((m) => String(m.message_id))
+    .filter((m) => m.startsWith("<"));
+  return { to, subject: String(r.subject ?? "(no subject)"), messageIds };
 }

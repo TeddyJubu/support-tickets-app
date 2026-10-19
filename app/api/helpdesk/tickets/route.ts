@@ -11,7 +11,9 @@ export async function GET(request: Request) {
   const q = url.searchParams.get("q") ?? "";
   // source=sim lists simulator tickets; default is the historical export
   if (url.searchParams.get("source") === "sim") {
-    return Response.json(listSimTickets({ q, limit, offset }));
+    return Response.json(
+      listSimTickets({ q, limit, offset, status: url.searchParams.get("status") ?? "" }),
+    );
   }
   return Response.json(
     listTickets({

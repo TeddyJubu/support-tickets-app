@@ -4,3 +4,4 @@ export { Message } from "./message";
 export { MessageComposer } from "./message-composer";
 export { ConversationArea } from "./conversation-area";
 export { CopilotPanel } from "./copilot-panel";
+export { Toaster, ShortcutsDialog, useHotkeys } from "./overlays";

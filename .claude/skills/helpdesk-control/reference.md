@@ -32,6 +32,7 @@ scripts/simulate.mjs ──▶ D1 (places #S orders) ──▶ helpdesk /api/hel
 | `POST /api/helpdesk/sim/tickets/{id}/messages` | key for `author: customer`; none for `agent` | add a message |
 | `PATCH /api/helpdesk/sim/tickets/{id}` `{status}` | none | open / pending / closed |
 | `GET /api/helpdesk/sim/awaiting` | `Bearer SIM_API_KEY` | tickets waiting on the customer |
+| `POST /api/helpdesk/email/tickets/{id}/reply` `{body, idempotencyKey}` | Caddy basic auth | email the customer via SES, then save the reply; a retry with the same key never emails twice (outbox: `sim_email_outbox`) |
 | `POST /api/chat` | none | copilot runtime |
 
 Ticket status: a customer message sets `open`, an agent reply sets `pending`, closing sets `closed`.
@@ -55,6 +56,7 @@ The production server reads `.env.local` at startup: restart after changing it.
 - Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs from a manual `caddy run`, not systemd; validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo caddy reload … --adapter caddyfile`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
 - Search-engine blocking: `app/robots.ts`, robots meta in `app/layout.tsx`, `X-Robots-Tag` in `next.config.ts` and Caddy.
 - Re-seed the export: put CSVs in `data/exports/` and `npm run seed` (rebuilds `data/helpdesk.db`; restart afterwards).
+- Test email-reply idempotency (scratch copy of `data/sim.db`, SES stubbed, sends nothing): `node --no-warnings scripts/test-email-reply.mjs`.
 - Inspect simulated store rows (read-only): `SELECT * FROM orders WHERE name LIKE '#S%'` on D1 `shop-sim`.
 
 ## Troubleshooting

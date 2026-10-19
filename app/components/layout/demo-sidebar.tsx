@@ -1,46 +1,180 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useTheme } from "next-themes";
 import {
-  MoreHorizontal,
   Search,
-  HelpCircle,
-  Shield,
-  Link2,
   Loader2,
+  X,
+  Inbox,
+  Archive,
+  Moon,
+  Sun,
+  Keyboard,
+  Flag,
+  RefreshCw,
+  SearchX,
 } from "lucide-react";
-import { formatDate } from "@/lib/helpdesk-format";
-import { useDashboard } from "../context/dashboard-context";
+import { formatRelative } from "@/lib/helpdesk-format";
+import type { TicketSummary } from "@/lib/helpdesk-types";
+import { useDashboard, type StatusFilter } from "../context/dashboard-context";
+import { Avatar, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
+import type { TicketStatus } from "../types";
 
-// Geometric logo component for SupportDesk
-function SupportDeskLogo() {
+// A little four-hole button, for Buttons Bebe
+function BrandMark() {
   return (
-    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-sidebar-primary to-sidebar-primary/70 flex items-center justify-center relative overflow-hidden">
-      {/* Abstract ticket/chat bubble shape */}
-      <div className="relative w-6 h-6">
-        {/* Main square (ticket) */}
-        <div className="absolute inset-0 bg-sidebar-primary-foreground/90 rounded-sm transform rotate-3" />
-        {/* Corner fold */}
-        <div className="absolute top-0 right-0 w-2 h-2 bg-sidebar-primary/50 rounded-bl-sm" />
-        {/* Lines representing text */}
-        <div className="absolute top-1.5 left-1 right-2 space-y-1">
-          <div className="h-0.5 bg-sidebar-primary/40 rounded-full w-full" />
-          <div className="h-0.5 bg-sidebar-primary/40 rounded-full w-3/4" />
-          <div className="h-0.5 bg-sidebar-primary/40 rounded-full w-1/2" />
-        </div>
-      </div>
-      {/* Subtle corner accent */}
-      <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-sidebar-primary-foreground/10 rounded-full blur-sm" />
+    <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[oklch(0.6_0.2_320)] shadow-soft">
+      <svg viewBox="0 0 24 24" className="size-5 text-white" aria-hidden>
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+        <circle cx="9.5" cy="9.5" r="1.4" fill="currentColor" />
+        <circle cx="14.5" cy="9.5" r="1.4" fill="currentColor" />
+        <circle cx="9.5" cy="14.5" r="1.4" fill="currentColor" />
+        <circle cx="14.5" cy="14.5" r="1.4" fill="currentColor" />
+      </svg>
     </div>
   );
 }
 
-export function DemoSidebar() {
+export function ticketStatusOf(ticket: Pick<TicketSummary, "status" | "closedAt">): TicketStatus {
+  if (ticket.closedAt || ticket.status === "closed") return "closed";
+  return ticket.status === "pending" ? "pending" : "open";
+}
+
+const FILTERS: Array<[StatusFilter, string]> = [
+  ["all", "All"],
+  ["open", "Needs reply"],
+  ["pending", "Waiting"],
+  ["closed", "Closed"],
+];
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  // The theme is only known in the browser
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+  const dark = mounted && resolvedTheme === "dark";
+  return (
+    <IconButton
+      label={dark ? "Switch to light mode" : "Switch to dark mode"}
+      onClick={() => setTheme(dark ? "light" : "dark")}
+    >
+      {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+    </IconButton>
+  );
+}
+
+function TicketRow({
+  ticket,
+  selected,
+  onSelect,
+}: {
+  ticket: TicketSummary;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const status = ticketStatusOf(ticket);
+  const needsReply = ticket.simulated && status === "open";
+  const urgent = ticket.priority === "critical" || ticket.priority === "high";
+  const name = ticket.customerName ?? ticket.customerEmail ?? "Unknown customer";
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+      data-ticket-id={ticket.id}
+      className={cn(
+        "group relative flex w-full gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors",
+        selected
+          ? "bg-sidebar-accent shadow-soft ring-1 ring-sidebar-border"
+          : "hover:bg-sidebar-accent/60",
+      )}
+    >
+      {selected && (
+        <span className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-primary" aria-hidden />
+      )}
+      <Avatar name={name} size="sm" className="mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span
+            className={cn(
+              "truncate text-[13px] text-sidebar-foreground",
+              needsReply ? "font-semibold" : "font-medium",
+            )}
+          >
+            {name}
+          </span>
+          <span
+            className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground"
+            title={ticket.updatedAt ?? ticket.createdAt ?? undefined}
+          >
+            {formatRelative(ticket.updatedAt ?? ticket.createdAt)}
+          </span>
+        </div>
+        <div
+          className={cn(
+            "truncate text-[13px]",
+            needsReply ? "text-sidebar-foreground/90" : "text-muted-foreground",
+          )}
+        >
+          {ticket.subject ?? "(no subject)"}
+        </div>
+        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          {ticket.simulated ? (
+            <span className="inline-flex items-center gap-1">
+              <span className={cn("size-1.5 rounded-full", STATUS_META[status].dot)} />
+              {STATUS_META[status].label}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              <span className={cn("size-1.5 rounded-full", STATUS_META[status].dot)} />
+              {status === "closed" ? "Closed" : "Open"}
+            </span>
+          )}
+          {urgent && (
+            <span className="inline-flex items-center gap-0.5 text-destructive" title={`${ticket.priority} priority`}>
+              <Flag className="size-3" />
+              <span className="capitalize">{ticket.priority}</span>
+            </span>
+          )}
+          {ticket.tags === "email" && (
+            <span className="rounded bg-info/12 px-1 py-px text-[10px] font-medium text-info">
+              Email
+            </span>
+          )}
+          <span className="ml-auto font-mono text-[10px] opacity-70">{ticket.id}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="space-y-1 px-1" aria-hidden>
+      {Array.from({ length: 7 }).map((_, i) => (
+        <div key={i} className="flex gap-3 px-2.5 py-2.5">
+          <Skeleton className="size-7 rounded-full" />
+          <div className="flex-1 space-y-2 pt-0.5">
+            <div className="flex justify-between gap-6">
+              <Skeleton className="h-3 w-1/2" />
+              <Skeleton className="h-3 w-8" />
+            </div>
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-2.5 w-1/3" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
   const {
-    linkedTickets,
-    customerRisk,
-    sentiment,
     tickets,
     ticketTotal,
     ticketQuery,
@@ -53,10 +187,12 @@ export function DemoSidebar() {
     selectTicket,
     ticketSource,
     setTicketSource,
+    statusFilter,
+    setStatusFilter,
   } = useDashboard();
 
   // Load the next page when the end of the list scrolls into view
-  const sentinelRef = useRef<HTMLLIElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -67,77 +203,57 @@ export function DemoSidebar() {
     return () => observer.disconnect();
   }, [loadMoreTickets]);
 
+  // Keep the selected ticket in view when moving with J/K
+  useEffect(() => {
+    if (!selectedTicketId) return;
+    document
+      .querySelector(`[data-ticket-id="${CSS.escape(selectedTicketId)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selectedTicketId]);
+
+  const showSkeleton = ticketsLoading && tickets.length === 0;
+
   return (
-    <aside className="w-56 bg-sidebar border-r border-sidebar-border flex flex-col h-full">
-      {/* Logo */}
-      <div className="p-4 border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <SupportDeskLogo />
-          <div className="flex-1 min-w-0">
-            <h1 className="font-semibold text-sidebar-foreground text-sm">
-              SupportDesk
-            </h1>
-            <p className="text-xs text-muted-foreground">AI-Powered Help</p>
-          </div>
-          <button className="p-1 text-muted-foreground hover:text-sidebar-foreground">
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+    <aside className="flex h-full w-[17rem] shrink-0 flex-col xl:w-[19rem] border-r border-sidebar-border bg-sidebar">
+      {/* Brand */}
+      <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+        <BrandMark />
+        <div className="min-w-0 flex-1 leading-tight">
+          <h1 className="text-sm font-semibold tracking-tight text-sidebar-foreground">
+            Buttons Bebe
+          </h1>
+          <p className="text-xs text-muted-foreground">Support inbox</p>
         </div>
       </div>
 
-      {/* AI Insights Quick View */}
-      {(customerRisk || sentiment) && (
-        <div className="p-3 border-b border-sidebar-border space-y-2">
-          <div className="text-xs font-semibold text-muted-foreground uppercase">
-            AI Insights
-          </div>
-          {customerRisk && (
-            <div
-              className={cn(
-                "flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs",
-                customerRisk.level === "low"
-                  ? "bg-green-500/10 text-green-600"
-                  : customerRisk.level === "medium"
-                    ? "bg-yellow-500/10 text-yellow-600"
-                    : "bg-red-500/10 text-red-600",
-              )}
-            >
-              <Shield className="w-3 h-3" />
-              <span className="capitalize">{customerRisk.level} Risk</span>
-              <span className="ml-auto font-medium">
-                {customerRisk.score}/100
-              </span>
-            </div>
-          )}
-          {sentiment && (
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-sidebar-accent text-xs text-sidebar-foreground">
-              <span>{sentiment.emoji}</span>
-              <span>{sentiment.label}</span>
-              <span className="ml-auto font-medium">{sentiment.score}/100</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Source tabs */}
-      <div className="px-3 pt-3">
-        <div className="grid grid-cols-2 gap-1 p-1 bg-sidebar-accent rounded-lg text-xs">
+      {/* Source */}
+      <div className="px-3">
+        <div
+          role="tablist"
+          aria-label="Ticket source"
+          className="grid grid-cols-2 gap-1 rounded-lg bg-sidebar-accent/70 p-1 text-xs"
+        >
           {(
             [
-              ["sim", "Simulated"],
-              ["history", "History"],
+              ["sim", "Inbox", Inbox, "Simulated and emailed tickets you can reply to"],
+              ["history", "Archive", Archive, "Read-only history from the Gorgias export"],
             ] as const
-          ).map(([value, label]) => (
+          ).map(([value, label, Icon, hint]) => (
             <button
               key={value}
+              role="tab"
+              type="button"
+              aria-selected={ticketSource === value}
+              title={hint}
               onClick={() => value !== ticketSource && setTicketSource(value)}
               className={cn(
-                "py-1.5 rounded-md transition-colors",
+                "inline-flex items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition-all",
                 ticketSource === value
-                  ? "bg-background text-sidebar-foreground font-medium shadow-sm"
+                  ? "bg-background text-sidebar-foreground shadow-soft"
                   : "text-muted-foreground hover:text-sidebar-foreground",
               )}
             >
+              <Icon className="size-3.5" />
               {label}
             </button>
           ))}
@@ -145,147 +261,156 @@ export function DemoSidebar() {
       </div>
 
       {/* Search */}
-      <div className="p-3">
-        <label className="flex items-center gap-2 px-3 py-2 bg-sidebar-accent rounded-lg text-muted-foreground text-sm focus-within:ring-1 focus-within:ring-ring">
-          <Search className="w-4 h-4 shrink-0" />
+      <div className="px-3 pt-3">
+        <label className="group flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm text-muted-foreground transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20">
+          <Search className="size-4 shrink-0" />
           <input
+            id="ticket-search"
             value={ticketQuery}
             onChange={(e) => setTicketQuery(e.target.value)}
-            placeholder="Search tickets"
-            className="w-full bg-transparent outline-none text-sidebar-foreground placeholder:text-muted-foreground"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setTicketQuery("");
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder="Search name, email, order…"
+            aria-label="Search tickets"
+            className="w-full min-w-0 bg-transparent text-sidebar-foreground outline-none placeholder:text-muted-foreground"
           />
-          {ticketsLoading && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
+          {ticketsLoading && ticketQuery ? (
+            <Loader2 className="size-3.5 shrink-0 animate-spin" />
+          ) : ticketQuery ? (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setTicketQuery("")}
+              className="rounded p-0.5 hover:bg-muted hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          ) : (
+            <Kbd className="group-focus-within:hidden">/</Kbd>
+          )}
         </label>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 overflow-y-auto">
-        <div className="flex items-center justify-between px-3 pb-2">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Tickets
-          </h3>
-          <span className="text-xs text-muted-foreground">
-            {ticketTotal.toLocaleString()}
-          </span>
+      {/* Status filter (inbox only) */}
+      {ticketSource === "sim" && (
+        <div className="flex gap-1 overflow-x-auto px-3 pt-2.5" role="radiogroup" aria-label="Filter by status">
+          {FILTERS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={statusFilter === value}
+              onClick={() => value !== statusFilter && setStatusFilter(value)}
+              className={cn(
+                "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+                statusFilter === value
+                  ? "bg-primary text-primary-foreground shadow-soft"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+      )}
+
+      <div className="flex items-center justify-between px-4 pb-1.5 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <span>{ticketQuery ? "Results" : "Tickets"}</span>
+        <span className="tabular-nums normal-case tracking-normal">
+          {ticketsLoading && tickets.length === 0 ? "…" : ticketTotal.toLocaleString()}
+        </span>
+      </div>
+
+      {/* List */}
+      <nav className="flex-1 overflow-y-auto px-2 pb-2" aria-label="Tickets">
+        {showSkeleton && <ListSkeleton />}
         <ul className="space-y-0.5">
           {tickets.map((ticket) => (
             <li key={ticket.id}>
-              <button
-                onClick={() => selectTicket(ticket.id)}
-                className={cn(
-                  "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors",
-                  ticket.id === selectedTicketId
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent",
-                )}
-              >
-                <div className="flex items-center gap-1.5">
-                  {ticket.priority && ticket.priority !== "normal" && (
-                    <span
-                      className={cn(
-                        "w-1.5 h-1.5 rounded-full shrink-0",
-                        ticket.priority === "critical" || ticket.priority === "high"
-                          ? "bg-red-500"
-                          : "bg-muted-foreground",
-                      )}
-                      title={`${ticket.priority} priority`}
-                    />
-                  )}
-                  {ticket.simulated && ticket.status && ticket.status !== "closed" && (
-                    <span
-                      className={cn(
-                        "w-1.5 h-1.5 rounded-full shrink-0",
-                        ticket.status === "open" ? "bg-blue-500" : "bg-yellow-500",
-                      )}
-                      title={ticket.status === "open" ? "Waiting on agent" : "Waiting on customer"}
-                    />
-                  )}
-                  <span className="truncate font-medium">
-                    {ticket.subject ?? "(no subject)"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <span className="truncate">
-                    {ticket.customerName ?? ticket.customerEmail}
-                  </span>
-                  <span className="ml-auto shrink-0">{formatDate(ticket.createdAt)}</span>
-                </div>
-              </button>
+              <TicketRow
+                ticket={ticket}
+                selected={ticket.id === selectedTicketId}
+                onSelect={() => selectTicket(ticket.id)}
+              />
             </li>
           ))}
-          {tickets.length < ticketTotal && (
-            <li ref={sentinelRef} className="px-3 py-2 text-xs text-muted-foreground">
-              Loading more…
-            </li>
-          )}
-          {ticketsError && (
-            <li className="px-3 py-2 text-xs text-red-500">
-              Couldn&apos;t load tickets ({ticketsError}).{" "}
-              <button onClick={retryTickets} className="underline">
-                Retry
-              </button>
-            </li>
-          )}
-          {!ticketsLoading && !ticketsError && tickets.length === 0 && (
-            <li className="px-3 py-2 text-xs text-muted-foreground">
-              {ticketSource === "sim" && !ticketQuery
-                ? "No simulated tickets yet. Run npm run simulate."
-                : "No tickets found"}
-            </li>
-          )}
         </ul>
-
-        {/* Linked Tickets */}
-        {linkedTickets.length > 0 && (
-          <div className="mt-6">
-            <h3 className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Linked Tickets
-            </h3>
-            <ul className="mt-2 space-y-1">
-              {linkedTickets.map((ticket) => (
-                <li key={ticket.id}>
-                  <a
-                    href="#"
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent"
-                  >
-                    <Link2 className="w-3 h-3 text-chart-3" />
-                    <span className="truncate flex-1">#{ticket.id}</span>
-                    <span
-                      className={cn(
-                        "text-xs px-1.5 py-0.5 rounded",
-                        ticket.status === "Resolved"
-                          ? "bg-green-500/20 text-green-600"
-                          : "bg-yellow-500/20 text-yellow-600",
-                      )}
-                    >
-                      {ticket.status}
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
+        {tickets.length > 0 && tickets.length < ticketTotal && (
+          <div ref={sentinelRef} className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" />
+            Loading more…
           </div>
         )}
-
+        {ticketsError && (
+          <div className="m-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs">
+            <p className="font-medium text-destructive">Couldn&apos;t load tickets</p>
+            <p className="mt-0.5 text-muted-foreground">{ticketsError}</p>
+            <button
+              type="button"
+              onClick={retryTickets}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-background px-2 py-1 font-medium text-foreground shadow-soft ring-1 ring-border hover:bg-muted"
+            >
+              <RefreshCw className="size-3" />
+              Try again
+            </button>
+          </div>
+        )}
+        {!ticketsLoading && !ticketsError && tickets.length === 0 && (
+          <div className="flex flex-col items-center px-6 py-10 text-center">
+            <div className="flex size-10 items-center justify-center rounded-full bg-sidebar-accent text-muted-foreground">
+              {ticketQuery ? <SearchX className="size-5" /> : <Inbox className="size-5" />}
+            </div>
+            <p className="mt-3 text-sm font-medium text-sidebar-foreground">
+              {ticketQuery
+                ? "No matching tickets"
+                : statusFilter !== "all"
+                  ? "Nothing here"
+                  : "No tickets yet"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {ticketQuery ? (
+                <>
+                  Try a name, email or order number.{" "}
+                  <button type="button" onClick={() => setTicketQuery("")} className="font-medium text-primary hover:underline">
+                    Clear search
+                  </button>
+                </>
+              ) : statusFilter !== "all" ? (
+                <>
+                  No tickets with this status.{" "}
+                  <button type="button" onClick={() => setStatusFilter("all")} className="font-medium text-primary hover:underline">
+                    Show all
+                  </button>
+                </>
+              ) : ticketSource === "sim" ? (
+                <>
+                  Run <code className="rounded bg-muted px-1 font-mono">npm run simulate</code> to create some.
+                </>
+              ) : (
+                "The archive is empty."
+              )}
+            </p>
+          </div>
+        )}
       </nav>
 
       {/* Footer */}
-      <div className="p-3 border-t border-sidebar-border">
-        <a
-          href="#"
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent"
+      <div className="flex items-center gap-1 border-t border-sidebar-border px-3 py-2">
+        <button
+          type="button"
+          onClick={onShowShortcuts}
+          className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
-          <HelpCircle className="w-4 h-4" />
-          <span>Help & Support</span>
-        </a>
-        <div className="flex items-center gap-2 px-3 py-2 mt-2">
-          <span className="text-[10px] text-muted-foreground uppercase">
-            AI by
-          </span>
-          <span className="text-xs font-semibold text-sidebar-primary">
-            Copilot SDK
-          </span>
+          <Keyboard className="size-4" />
+          Shortcuts
+          <Kbd>?</Kbd>
+        </button>
+        <div className="ml-auto">
+          <ThemeToggle />
         </div>
       </div>
     </aside>

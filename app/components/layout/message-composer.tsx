@@ -1,219 +1,165 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useState, useRef, useEffect } from "react";
-import {
-  ChevronDown,
-  Send,
-  Paperclip,
-  Smile,
-  Mic,
-  Type,
-  X,
-  Sparkles,
-  MessageCircle,
-  Mail,
-  Check,
-} from "lucide-react";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCopilot } from "@yourgpt/copilot-sdk/react";
+import { Send, Sparkles, Loader2, Mail, Info, CheckCircle2, AlertTriangle, X } from "lucide-react";
 import { useDashboard } from "../context/dashboard-context";
-import { avatars } from "../data/mock-data";
-
-type ChannelType = "Chat" | "Email";
+import { Kbd, modKey } from "../ui";
 
 export function MessageComposer() {
-  const { composeText, setComposeText, sendAgentMessage } = useDashboard();
-  const [channel, setChannel] = useState<ChannelType>("Chat");
-  const [emailSubject, setEmailSubject] = useState("");
-  const [showChannelMenu, setShowChannelMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const {
+    composeText,
+    setComposeText,
+    sendAgentMessage,
+    setTicketStatus,
+    ticketDetail,
+    ticketStatus,
+    sending,
+    setSidePanel,
+  } = useDashboard();
+  const { sendMessage, isLoading: copilotBusy } = useCopilot();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Close menu when clicking outside
+  const ticket = ticketDetail?.ticket;
+  const isEmail = ticket?.tags === "email";
+  const archived = !ticket?.simulated;
+  const recipientName = ticketDetail?.customer?.name ?? ticket?.customerName ?? "the customer";
+  const recipientEmail = ticketDetail?.customer?.email ?? ticket?.customerEmail;
+  const canSend = composeText.trim().length > 0 && !sending;
+
+  // Grow with the text, up to a cap
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`;
+  }, [composeText]);
+
+  // A drafted reply lands here from the copilot: bring it into focus
+  const prevText = useRef(composeText);
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowChannelMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+    if (!prevText.current && composeText.length > 40) textareaRef.current?.focus();
+    prevText.current = composeText;
+  }, [composeText]);
 
-  const handleSend = () => {
-    if (composeText.trim()) {
-      if (channel === "Email") {
-        sendAgentMessage(composeText, "Email", emailSubject || "No Subject");
-        setEmailSubject("");
-      } else {
-        sendAgentMessage(composeText, "Chat");
-      }
-    }
+  const send = async (thenClose = false) => {
+    if (!canSend || !ticket) return;
+    // Close the ticket the reply went to, even if the agent has moved on
+    const id = ticket.id;
+    const ok = await sendAgentMessage(composeText, "Email", ticket.subject ? `Re: ${ticket.subject}` : undefined);
+    if (ok && thenClose && !archived) await setTicketStatus("closed", id);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const selectChannel = (newChannel: ChannelType) => {
-    setChannel(newChannel);
-    setShowChannelMenu(false);
+  const draftWithAi = () => {
+    setSidePanel("copilot");
+    sendMessage("Draft a response to the customer");
   };
 
   return (
-    <div className="border-t border-border p-4 bg-card">
-      <div className="flex items-center gap-3 mb-3">
-        <img
-          src={avatars.agent}
-          alt="Agent"
-          className="w-8 h-8 rounded-full object-cover"
-        />
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-muted-foreground">Reply as</span>
-          <button className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-muted rounded-md text-sm text-foreground hover:bg-accent transition-colors">
-            <span>Marcus Johnson</span>
-            <ChevronDown className="w-3 h-3 text-muted-foreground" />
-          </button>
-          <span className="text-sm text-muted-foreground">via</span>
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setShowChannelMenu(!showChannelMenu)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-muted rounded-md text-sm text-foreground hover:bg-accent transition-colors"
-            >
-              {channel === "Email" ? (
-                <Mail className="w-3.5 h-3.5 text-primary" />
-              ) : (
-                <MessageCircle className="w-3.5 h-3.5 text-primary" />
-              )}
-              <span>{channel}</span>
-              <ChevronDown className="w-3 h-3 text-muted-foreground" />
-            </button>
-            {showChannelMenu && (
-              <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg py-1 z-50 min-w-[120px]">
-                <button
-                  onClick={() => selectChannel("Chat")}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
-                >
-                  <MessageCircle className="w-4 h-4 text-primary" />
-                  <span>Chat</span>
-                  {channel === "Chat" && (
-                    <Check className="w-3 h-3 ml-auto text-primary" />
-                  )}
-                </button>
-                <button
-                  onClick={() => selectChannel("Email")}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
-                >
-                  <Mail className="w-4 h-4 text-primary" />
-                  <span>Email</span>
-                  {channel === "Email" && (
-                    <Check className="w-3 h-3 ml-auto text-primary" />
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="ml-auto flex items-center gap-1">
-          {composeText && (
-            <span className="text-xs text-chart-1 flex items-center gap-1 px-2 py-1 bg-chart-1/10 rounded">
-              <Sparkles className="w-3 h-3" />
-              AI Draft
+    <div className="border-t border-border bg-background px-6 pb-4 pt-3">
+      <div className="mx-auto w-full max-w-3xl">
+        {/* Who this goes to */}
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <Mail className="size-3.5" />
+          <span>
+            Reply to <span className="font-medium text-foreground">{recipientName}</span>
+            {recipientEmail && <span className="hidden sm:inline"> &lt;{recipientEmail}&gt;</span>}
+          </span>
+          {isEmail ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-warning/12 px-2 py-0.5 font-medium text-warning">
+              <AlertTriangle className="size-3" />
+              Sends a real email
+            </span>
+          ) : archived ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+              <Info className="size-3" />
+              Archived ticket: replies stay in this view and aren&apos;t sent
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full bg-chart-5/10 px-2 py-0.5 text-chart-5">
+              Simulated customer replies automatically
             </span>
           )}
-          <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg">
-            <Sparkles className="w-5 h-5" />
-          </button>
         </div>
-      </div>
-      {/* Email subject field - only show when Email channel selected */}
-      {channel === "Email" && (
-        <div className="mb-3">
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-background border border-input rounded-lg focus-within:ring-2 focus-within:ring-ring">
-            <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="text-sm text-muted-foreground shrink-0">
-              Subject:
-            </span>
-            <input
-              type="text"
-              value={emailSubject}
-              onChange={(e) => setEmailSubject(e.target.value)}
-              placeholder="Enter email subject..."
-              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-            />
-          </div>
-        </div>
-      )}
 
-      <div className="relative">
-        <textarea
-          value={composeText}
-          onChange={(e) => setComposeText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            channel === "Email"
-              ? "Compose your email message..."
-              : 'Comment or Type "/" For commands'
-          }
+        <div
           className={cn(
-            "w-full px-4 py-3 bg-background border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-ring text-sm placeholder:text-muted-foreground",
-            composeText
-              ? "border-chart-1/50 ring-1 ring-chart-1/20"
-              : "border-input",
+            "rounded-xl border bg-card shadow-soft transition-all focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/15",
+            sending ? "border-input opacity-70" : "border-input",
           )}
-          rows={composeText ? 6 : channel === "Email" ? 4 : 2}
-        />
-      </div>
-      <div className="flex items-center justify-between mt-3">
-        <div className="flex items-center gap-0.5">
-          <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg">
-            <Type className="w-4 h-4" />
-          </button>
-          <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg">
-            <Smile className="w-4 h-4" />
-          </button>
-          <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg">
-            <Paperclip className="w-4 h-4" />
-          </button>
-          <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg">
-            <Mic className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          {composeText && (
+        >
+          <textarea
+            ref={textareaRef}
+            id="reply-box"
+            value={composeText}
+            onChange={(e) => setComposeText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                send(e.shiftKey);
+              } else if (e.key === "Escape") {
+                e.currentTarget.blur();
+              }
+            }}
+            disabled={sending}
+            placeholder={`Write a reply to ${recipientName.split(" ")[0]}…`}
+            aria-label="Reply"
+            rows={3}
+            className="block max-h-[40vh] min-h-[4.5rem] w-full resize-none bg-transparent px-4 pt-3 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+          />
+          <div className="flex items-center gap-2 px-2 pb-2 pt-1">
             <button
-              onClick={() => setComposeText("")}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent rounded-lg transition-colors"
+              type="button"
+              onClick={draftWithAi}
+              disabled={copilotBusy}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-primary transition-colors hover:bg-accent disabled:opacity-50"
             >
-              <X className="w-3 h-3" />
-              Clear
+              {copilotBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              Draft with AI
             </button>
-          )}
-          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent rounded-lg transition-colors">
-            Macros
-            <ChevronDown className="w-3 h-3" />
-          </button>
-          <button className="px-4 py-2 text-sm text-muted-foreground hover:bg-accent rounded-lg transition-colors">
-            End Chat
-          </button>
-          <button
-            onClick={handleSend}
-            disabled={!composeText.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {channel === "Email" ? (
-              <>
-                <Mail className="w-4 h-4" />
-                Send Email
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4" />
-                Send
-              </>
+            {composeText && !sending && (
+              <button
+                type="button"
+                onClick={() => {
+                  setComposeText("");
+                  textareaRef.current?.focus();
+                }}
+                className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-3.5" />
+                Discard
+              </button>
             )}
-          </button>
+
+            <span className="ml-auto hidden items-center gap-1 text-[11px] text-muted-foreground md:inline-flex">
+              <Kbd>{modKey()}</Kbd>
+              <Kbd>↵</Kbd>
+              to send
+            </span>
+
+            {!archived && ticketStatus !== "closed" && (
+              <button
+                type="button"
+                onClick={() => send(true)}
+                disabled={!canSend}
+                title={`Send and close the ticket (${modKey()}+Shift+Enter)`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-foreground ring-1 ring-border transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+              >
+                <CheckCircle2 className="size-4" />
+                <span className="hidden lg:inline">Send &amp; close</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => send()}
+              disabled={!canSend}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground shadow-soft transition-all hover:bg-primary/90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+            >
+              {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-3.5" />}
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
