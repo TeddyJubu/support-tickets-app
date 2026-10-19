@@ -46,7 +46,7 @@ A typical test cycle: `simulate --count N` → handle tickets (UI or `reply`) �
 
 - **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOP_D1_TOKEN`, `SIM_API_KEY`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
 - **The demo store holds real customer data** (≈46k real customers, 324k real orders). Only ever write simulated rows (tagged `simulated`, `#S…` orders, `@customers.bb-sim.test` emails). Never modify, export or display real customers/orders, and don't change the `shop-sim` Worker itself.
-- **The helpdesk is public** (search engines blocked, no login). Don't add endpoints that expose store or customer data; the order lookup only serves orders referenced by simulated tickets.
+- **The helpdesk is on the public internet** (search engines blocked). Caddy asks for the `support` login on the whole site except the SES webhook (`/api/helpdesk/inbound/ses`); the CLI and simulator bypass it on `127.0.0.1:3100`. Don't add endpoints that expose store or customer data outside that login, and don't narrow the Caddy `basic_auth`. The order lookup only serves orders referenced by simulated tickets.
 - Historical tickets are read-only; `reply`/`close` only work on `SIM-…` tickets.
 - After changing app code, run `npm run helpdesk -- restart` (it builds first). The user's own dev server may run on port 3000 — leave it alone.
 - Ask the user before resetting simulated data, deleting anything, or changing Caddy, systemd or Cloudflare settings.

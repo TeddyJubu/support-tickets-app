@@ -107,7 +107,7 @@ const commands = {
     out(data, () =>
       [
         `service      ${data.service}`,
-        `site         ${SITE} (HTTP ${site})`,
+        `site         ${SITE} (HTTP ${site}${site === 401 ? ", login required" : ""})`,
         `store        ${data.store}`,
         `simulated    ${sim.total} tickets (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ") || "none"})`,
         `history      ${hist.total} tickets`,

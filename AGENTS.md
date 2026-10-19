@@ -18,5 +18,5 @@ Hard rules:
 
 - Never print secrets from `.env.local`.
 - The demo store holds real customer data: only write simulated rows (`#S…` orders, `@customers.bb-sim.test` emails), never touch real ones or the `shop-sim` Worker.
-- The site is public: don't expose store or customer data through new endpoints.
+- The site is on the public internet behind a Caddy login (everything except the SES webhook): don't expose store or customer data through new endpoints, and don't narrow that login.
 - Ask before resetting data or changing Caddy, systemd or Cloudflare settings.

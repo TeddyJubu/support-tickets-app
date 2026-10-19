@@ -21,7 +21,9 @@ scripts/simulate.mjs ──▶ D1 (places #S orders) ──▶ helpdesk /api/hel
 
 ## HTTP API (127.0.0.1:3100 or the public site)
 
-| Route | Auth | Purpose |
+On the public site Caddy asks for the `support` login (basic auth) on every page and route, except the SES webhook. On `127.0.0.1:3100`, where the CLI and simulator connect, only the checks in the **App check** column apply. The app binds to loopback only.
+
+| Route | App check | Purpose |
 |---|---|---|
 | `GET /api/helpdesk/tickets?source=sim\|history&q=&limit=&offset=` | none | list tickets |
 | `GET /api/helpdesk/tickets/{id}` | none | ticket + customer + history (+ messages for SIM) |
@@ -32,8 +34,11 @@ scripts/simulate.mjs ──▶ D1 (places #S orders) ──▶ helpdesk /api/hel
 | `POST /api/helpdesk/sim/tickets/{id}/messages` | key for `author: customer`; none for `agent` | add a message |
 | `PATCH /api/helpdesk/sim/tickets/{id}` `{status}` | none | open / pending / closed |
 | `GET /api/helpdesk/sim/awaiting` | `Bearer SIM_API_KEY` | tickets waiting on the customer |
-| `POST /api/helpdesk/email/tickets/{id}/reply` `{body, idempotencyKey}` | Caddy basic auth | email the customer via SES, then save the reply; a retry with the same key never emails twice (outbox: `sim_email_outbox`) |
+| `POST /api/helpdesk/email/tickets/{id}/reply` `{body, idempotencyKey}` | none | email the customer via SES, then save the reply; a retry with the same key never emails twice (outbox: `sim_email_outbox`) |
+| `POST /api/helpdesk/inbound/ses?token=` | `INBOUND_EMAIL_TOKEN` + SNS topic ARN | SES/SNS inbound email webhook; the only route Caddy leaves open |
 | `POST /api/chat` | none | copilot runtime |
+
+Through Caddy the `Authorization` header carries the basic-auth login, so a Bearer key can't be sent over the public URL: point scripts at `127.0.0.1:3100`, which is the default for `SIM_HELPDESK_URL`.
 
 Ticket status: a customer message sets `open`, an agent reply sets `pending`, closing sets `closed`.
 
@@ -53,7 +58,7 @@ The production server reads `.env.local` at startup: restart after changing it.
 
 - Rebuild + restart: `npm run helpdesk -- restart` (= `npm run build && sudo systemctl restart support-tickets`).
 - Logs: `npm run helpdesk -- logs 200` or `sudo journalctl -u support-tickets -f`.
-- Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs from a manual `caddy run`, not systemd; validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo caddy reload … --adapter caddyfile`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
+- Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). The helpdesk block puts `basic_auth @login` (user `support`) on everything except `@login not path /api/helpdesk/inbound/ses`. Don't narrow it again: the API serves real customer data. Caddy runs from a manual `caddy run`, not systemd; validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo caddy reload … --adapter caddyfile`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
 - Search-engine blocking: `app/robots.ts`, robots meta in `app/layout.tsx`, `X-Robots-Tag` in `next.config.ts` and Caddy.
 - Re-seed the export: put CSVs in `data/exports/` and `npm run seed` (rebuilds `data/helpdesk.db`; restart afterwards).
 - Test email-reply idempotency (scratch copy of `data/sim.db`, SES stubbed, sends nothing): `node --no-warnings scripts/test-email-reply.mjs`.
