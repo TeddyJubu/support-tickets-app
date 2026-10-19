@@ -385,6 +385,10 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  // Idempotency key of the email reply in flight or last failed: sending the same text to the
+  // same ticket again reuses it, so the server never emails one reply twice
+  const pendingEmailReply = useRef<{ ticketId: string; body: string; key: string } | null>(null);
+
   // Resolves true once the reply is saved (and emailed, for email tickets)
   const sendAgentMessage = useCallback(
     async (
@@ -402,6 +406,13 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         // Simulated tickets: save the reply so the simulated customer can answer it
         // Email tickets: really sends to the customer (password-protected route)
         const isEmail = ticketDetail.ticket.tags === "email";
+        let idempotencyKey: string | undefined;
+        if (isEmail) {
+          const last = pendingEmailReply.current;
+          idempotencyKey =
+            last?.ticketId === id && last.body === content.trim() ? last.key : crypto.randomUUID();
+          pendingEmailReply.current = { ticketId: id, body: content.trim(), key: idempotencyKey };
+        }
         setSending(true);
         try {
           const res = await fetch(
@@ -411,14 +422,17 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
             {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ author: "agent", body: content, sender: "You" }),
+              body: JSON.stringify({ author: "agent", body: content, sender: "You", idempotencyKey }),
             },
           );
           if (!res.ok) {
             const err = (await res.json().catch(() => null)) as { error?: string } | null;
-            notify(`Reply not sent: ${err?.error ?? `HTTP ${res.status}`}`, "error");
+            // 409/500 from the email route: it may already have been emailed, and the message says so
+            const maybeSent = isEmail && (res.status === 409 || res.status === 500) && err?.error;
+            notify(maybeSent || `Reply not sent: ${err?.error ?? `HTTP ${res.status}`}`, "error");
             return false;
           }
+          if (pendingEmailReply.current?.key === idempotencyKey) pendingEmailReply.current = null;
           setState((prev) => (prev.composeText === content ? { ...prev, composeText: "" } : prev));
           if (selectedRef.current === id) applyDetail((await res.json()) as TicketDetail, true);
           notify(isEmail ? "Reply emailed to the customer" : "Reply sent");

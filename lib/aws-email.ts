@@ -3,10 +3,14 @@ import { AwsClient } from "aws4fetch";
 // Scoped IAM user helpdesk-friday: s3:GetObject on the inbound bucket, SES send from support@ only.
 const region = process.env.HELPDESK_AWS_REGION ?? "us-west-2";
 
+// SES definitely did not send the email (bad config, or SES answered with an error), so resending is safe.
+// Any other error (network failure, unreadable response) may have happened after SES accepted it.
+export class EmailNotSentError extends Error {}
+
 function client(service: string) {
   const accessKeyId = process.env.HELPDESK_AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.HELPDESK_AWS_SECRET_ACCESS_KEY;
-  if (!accessKeyId || !secretAccessKey) throw new Error("AWS email credentials are not configured");
+  if (!accessKeyId || !secretAccessKey) throw new EmailNotSentError("AWS email credentials are not configured");
   return new AwsClient({ accessKeyId, secretAccessKey, region, service });
 }
 
@@ -56,7 +60,8 @@ export async function sendEmail(m: OutboundEmail) {
     body: JSON.stringify({ Content: { Raw: { Data: Buffer.from(buildMime(from, m)).toString("base64") } } }),
   });
   const body = (await res.json().catch(() => null)) as { MessageId?: string; message?: string } | null;
-  if (!res.ok || !body?.MessageId) throw new Error(body?.message ?? `SES send failed: HTTP ${res.status}`);
+  if (!res.ok) throw new EmailNotSentError(body?.message ?? `SES send failed: HTTP ${res.status}`);
+  if (!body?.MessageId) throw new Error("SES response had no MessageId");
   // SES uses email.amazonses.com in us-east-1 and <region>.amazonses.com elsewhere
   const domain = region === "us-east-1" ? "email.amazonses.com" : `${region}.amazonses.com`;
   return `<${body.MessageId}@${domain}>`;

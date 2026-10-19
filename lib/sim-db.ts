@@ -66,6 +66,18 @@ function getDb() {
       message_id TEXT PRIMARY KEY,     -- Message-ID of an inbound email
       ticket_id TEXT REFERENCES sim_tickets(id)
     );
+
+    -- Agent email replies, keyed by the client's idempotency key, so a retry never emails twice
+    CREATE TABLE IF NOT EXISTS sim_email_outbox (
+      idem_key TEXT PRIMARY KEY,
+      ticket_id TEXT REFERENCES sim_tickets(id),
+      body TEXT,
+      status TEXT DEFAULT 'sending',   -- sending | sent | failed (SES rejected it; safe to resend)
+      message_id TEXT,                 -- SES Message-ID once SES accepted it
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   return db;
 }
@@ -432,6 +444,78 @@ export function ingestEmail(input: SimTicketInput & { messageId: string; refs: s
 
 export function recordEmailId(messageId: string, ticketId: string) {
   getDb().prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(messageId, ticketId);
+}
+
+// Outbox for agent email replies. The row is written before SES is called, so a retry with
+// the same key can tell whether the email already went out:
+//   send    - new key, or SES rejected the last attempt: the caller sends now
+//   sent    - already emailed and saved: return the saved ticket
+//   unsaved - SES accepted it but saving failed: save it now, don't send again
+//   unknown - another request is sending it, or a crash left the outcome unknown: don't send
+//   conflict - the key was used for a different reply
+export type EmailReplyClaim =
+  | { state: "send" | "unknown" | "conflict" }
+  | { state: "sent"; detail: TicketDetail | null }
+  | { state: "unsaved"; messageId: string };
+
+export function claimEmailReply(key: string, ticketId: string, body: string): EmailReplyClaim {
+  const d = getDb();
+  // Single statements, so two requests (or processes) racing on one key can't both claim it
+  const inserted = d
+    .prepare(`INSERT OR IGNORE INTO sim_email_outbox (idem_key, ticket_id, body) VALUES (?, ?, ?)`)
+    .run(key, ticketId, body);
+  if (inserted.changes > 0) return { state: "send" };
+  const row = d.prepare(`SELECT * FROM sim_email_outbox WHERE idem_key = ?`).get(key) as Row;
+  if (row.ticket_id !== ticketId || row.body !== body) return { state: "conflict" };
+  if (row.status === "sent") return { state: "sent", detail: getSimTicketDetail(ticketId) };
+  if (row.message_id) return { state: "unsaved", messageId: String(row.message_id) };
+  const retried = d
+    .prepare(
+      `UPDATE sim_email_outbox SET status = 'sending', error = NULL, updated_at = datetime('now')
+       WHERE idem_key = ? AND status = 'failed'`,
+    )
+    .run(key);
+  return { state: retried.changes > 0 ? "send" : "unknown" };
+}
+
+export function failEmailReply(key: string, error: string) {
+  getDb()
+    .prepare(
+      `UPDATE sim_email_outbox SET status = 'failed', error = ?, updated_at = datetime('now')
+       WHERE idem_key = ? AND status = 'sending' AND message_id IS NULL`,
+    )
+    .run(error.slice(0, 500), key);
+}
+
+// After SES accepted the reply: mark it sent and add the agent message together
+export function completeEmailReply(key: string, ticketId: string, messageId: string, body: string, sender: string) {
+  const d = getDb();
+  d.exec("SAVEPOINT complete_email_reply");
+  try {
+    const res = d
+      .prepare(
+        `UPDATE sim_email_outbox SET status = 'sent', message_id = ?, error = NULL, updated_at = datetime('now')
+         WHERE idem_key = ? AND status != 'sent'`,
+      )
+      .run(messageId, key);
+    if (res.changes === 0) throw new Error("Outbox row missing or already sent");
+    recordEmailId(messageId, ticketId);
+    const detail = addSimMessage(ticketId, "agent", body, sender);
+    if (!detail) throw new Error(`Ticket ${ticketId} not found`);
+    d.exec("RELEASE complete_email_reply");
+    return detail;
+  } catch (err) {
+    d.exec("ROLLBACK TO complete_email_reply");
+    d.exec("RELEASE complete_email_reply");
+    // Keep at least the Message-ID, so a retry saves the reply instead of emailing it again
+    try {
+      d.prepare(`UPDATE sim_email_outbox SET message_id = ?, updated_at = datetime('now') WHERE idem_key = ?`).run(
+        messageId,
+        key,
+      );
+    } catch {}
+    throw err;
+  }
 }
 
 // Who to reply to on an email ticket, plus the thread's Message-IDs (oldest first) for threading headers
