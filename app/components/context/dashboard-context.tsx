@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useSyncExternalStore,
 } from "react";
 import type {
   DashboardState,
@@ -24,12 +25,10 @@ import type {
   TicketSummary,
 } from "@/lib/helpdesk-types";
 import {
-  formatDate,
   formatDuration,
   formatTime,
   initials,
 } from "@/lib/helpdesk-format";
-import { avatars } from "../data/mock-data";
 
 const DashboardContext = createContext<DashboardContextType | null>(null);
 
@@ -43,33 +42,61 @@ export function useDashboard() {
 const PAGE_SIZE = 50;
 
 export type TicketSource = "sim" | "history";
+export type StatusFilter = "all" | "open" | "pending" | "closed";
+export type SidePanel = "copilot" | "customer";
 
-// Helper to get current time string
-function getCurrentTime(): string {
-  return new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+export interface Toast {
+  id: number;
+  message: string;
+  tone: "success" | "error" | "info";
 }
+
+// Side panel preference, remembered per browser
+const PANEL_KEY = "helpdesk.sidePanel";
+const panelListeners = new Set<() => void>();
+function subscribePanel(listener: () => void) {
+  panelListeners.add(listener);
+  return () => panelListeners.delete(listener);
+}
+function readPanel(): SidePanel | null {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(PANEL_KEY);
+  } catch {}
+  if (saved === "copilot" || saved === "customer") return saved;
+  // Collapsed by default where it would cover the conversation
+  return saved === "none" || window.innerWidth < 1280 ? null : "copilot";
+}
+function writePanel(panel: SidePanel | null) {
+  try {
+    localStorage.setItem(PANEL_KEY, panel ?? "none");
+  } catch {}
+  panelListeners.forEach((l) => l());
+}
+
+// Message-IDs from real email aren't useful to show; replayed Gorgias ids are short
+const showSourceId = (id: string | null | undefined) => !!id && /^[\w-]{1,24}$/.test(id);
 
 // Simulated tickets carry their full conversation
 function simMessages(detail: TicketDetail): TicketMessage[] {
   const { ticket } = detail;
   const name = ticket.customerName ?? ticket.customerEmail ?? "Customer";
+  const opened = ticket.tags === "email" ? "Received by email" : "Simulated ticket opened";
   const messages: TicketMessage[] = [
     {
       id: 0,
       type: "system",
-      content: `Simulated ticket opened ${formatDate(ticket.createdAt)}${
-        ticket.orderName ? ` about order ${ticket.orderName}` : ""
-      }${ticket.sourceTicketId ? ` · replayed from #${ticket.sourceTicketId}` : ""}`,
+      content: `${opened}${ticket.orderName ? ` about order ${ticket.orderName}` : ""}${
+        showSourceId(ticket.sourceTicketId) ? ` · replayed from #${ticket.sourceTicketId}` : ""
+      }`,
       timestamp: formatTime(ticket.createdAt),
+      date: ticket.createdAt,
     },
   ];
   detail.messages!.forEach((m, i) => {
     const time = formatTime(m.createdAt);
     if (m.author === "system") {
-      messages.push({ id: m.id, type: "system", content: m.body, timestamp: time });
+      messages.push({ id: m.id, type: "system", content: m.body, timestamp: time, date: m.createdAt });
       return;
     }
     const sender = m.sender ?? (m.author === "customer" ? name : "Agent");
@@ -77,10 +104,11 @@ function simMessages(detail: TicketDetail): TicketMessage[] {
       id: m.id,
       type: m.author,
       sender,
-      avatar: m.author === "agent" ? avatars.agent : initials(sender),
+      avatar: initials(sender),
       channel: "Email",
       ...(i === 0 ? { emailSubject: ticket.subject ?? "(no subject)" } : {}),
       timestamp: time,
+      date: m.createdAt,
       content: m.body,
     });
   });
@@ -88,8 +116,9 @@ function simMessages(detail: TicketDetail): TicketMessage[] {
     messages.push({
       id: Number.MAX_SAFE_INTEGER,
       type: "system",
-      content: `Closed ${formatDate(ticket.closedAt)}`,
+      content: "Ticket closed",
       timestamp: formatTime(ticket.closedAt),
+      date: ticket.closedAt,
     });
   }
   return messages;
@@ -105,10 +134,11 @@ function messagesFromDetail(detail: TicketDetail): TicketMessage[] {
     {
       id: 1,
       type: "system",
-      content: `Ticket opened ${formatDate(ticket.createdAt)} via ${ticket.channel ?? "email"}${
+      content: `Ticket opened via ${ticket.channel ?? "email"}${
         ticket.integration ? ` (${ticket.integration})` : ""
       }`,
       timestamp: formatTime(ticket.createdAt),
+      date: ticket.createdAt,
     },
     {
       id: 2,
@@ -118,6 +148,7 @@ function messagesFromDetail(detail: TicketDetail): TicketMessage[] {
       channel: "Email",
       emailSubject: ticket.subject ?? "(no subject)",
       timestamp: formatTime(ticket.createdAt),
+      date: ticket.createdAt,
       content: `${ticket.customerMessages} customer message${
         ticket.customerMessages === 1 ? "" : "s"
       } and ${ticket.agentMessages} agent repl${
@@ -129,12 +160,13 @@ function messagesFromDetail(detail: TicketDetail): TicketMessage[] {
     messages.push({
       id: 3,
       type: "system",
-      content: `Closed ${formatDate(ticket.closedAt)}${
+      content: `Closed${
         ticket.assigneeName ? ` by ${ticket.assigneeName}` : ""
       } · first response ${formatDuration(ticket.firstResponseSeconds)} · resolved in ${formatDuration(
         ticket.resolutionSeconds,
       )}`,
       timestamp: formatTime(ticket.closedAt),
+      date: ticket.closedAt,
     });
   }
   return messages;
@@ -167,6 +199,28 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [ticketQuery, setTicketQuery] = useState("");
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilterState] = useState<StatusFilter>("all");
+  const statusRef = useRef<StatusFilter>("all");
+
+  // Right-hand panel (AI copilot or customer details); null when collapsed
+  const sidePanel = useSyncExternalStore(subscribePanel, readPanel, () => "copilot" as SidePanel);
+  const setSidePanel = useCallback((panel: SidePanel | null) => writePanel(panel), []);
+
+  // Toasts
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  const notify = useCallback(
+    (message: string, tone: Toast["tone"] = "success") => {
+      const id = Date.now() + Math.random();
+      setToasts((prev) => [...prev.slice(-2), { id, message, tone }]);
+      setTimeout(() => dismissToast(id), tone === "error" ? 7000 : 3500);
+    },
+    [dismissToast],
+  );
+
+  const [sending, setSending] = useState(false);
 
   // Selected ticket
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
@@ -184,6 +238,9 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         limit: String(PAGE_SIZE),
         source: sourceRef.current,
       });
+      if (sourceRef.current === "sim" && statusRef.current !== "all") {
+        params.set("status", statusRef.current);
+      }
       const res = await fetch(`/api/helpdesk/tickets?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as TicketListResponse;
@@ -249,10 +306,19 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (!selectedRef.current && list[0]) selectTicket(list[0].id);
     }, ticketQuery ? 300 : 0);
     return () => clearTimeout(timer);
-  }, [ticketQuery, ticketSource, fetchTickets, selectTicket]);
+  }, [ticketQuery, ticketSource, statusFilter, fetchTickets, selectTicket]);
+
+  const setStatusFilter = useCallback((filter: StatusFilter) => {
+    statusRef.current = filter;
+    setTickets([]);
+    setTicketTotal(0);
+    setStatusFilterState(filter);
+  }, []);
 
   const setTicketSource = useCallback((source: TicketSource) => {
     sourceRef.current = source;
+    statusRef.current = "all";
+    setStatusFilterState("all");
     selectedRef.current = null;
     setSelectedTicketId(null);
     setTicketDetail(null);
@@ -301,34 +367,49 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  // Resolves true once the reply is saved (and emailed, for email tickets)
   const sendAgentMessage = useCallback(
-    (
+    async (
       content: string,
-      channel: "Chat" | "Email" = "Chat",
+      channel: "Chat" | "Email" = "Email",
       emailSubject?: string,
-    ) => {
-      if (!content.trim()) return;
+    ): Promise<boolean> => {
+      if (!content.trim()) return false;
       const id = selectedRef.current;
       if (id?.startsWith("SIM-")) {
         // Simulated tickets: save the reply so the simulated customer can answer it
-        setState((prev) => ({ ...prev, composeText: "" }));
         // Email tickets: really sends to the customer (password-protected route)
         const isEmail = ticketDetail?.ticket.id === id && ticketDetail.ticket.tags === "email";
-        fetch(isEmail ? `/api/helpdesk/email/tickets/${id}/reply` : `/api/helpdesk/sim/tickets/${id}/messages`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ author: "agent", body: content, sender: "You" }),
-        }).then(async (res) => {
+        setSending(true);
+        try {
+          const res = await fetch(
+            isEmail
+              ? `/api/helpdesk/email/tickets/${id}/reply`
+              : `/api/helpdesk/sim/tickets/${id}/messages`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ author: "agent", body: content, sender: "You" }),
+            },
+          );
           if (!res.ok) {
             const err = (await res.json().catch(() => null)) as { error?: string } | null;
-            setState((prev) => (prev.composeText ? prev : { ...prev, composeText: content }));
-            window.alert(`Reply not sent: ${err?.error ?? `HTTP ${res.status}`}`);
-            return;
+            notify(`Reply not sent: ${err?.error ?? `HTTP ${res.status}`}`, "error");
+            return false;
           }
+          setState((prev) => (prev.composeText === content ? { ...prev, composeText: "" } : prev));
           if (selectedRef.current === id) applyDetail((await res.json()) as TicketDetail, true);
-        });
-        return;
+          notify(isEmail ? "Reply emailed to the customer" : "Reply sent");
+          fetchTickets(ticketQuery, 0, true);
+          return true;
+        } catch {
+          notify("Reply not sent: network error", "error");
+          return false;
+        } finally {
+          setSending(false);
+        }
       }
+      // Archived tickets: the reply only lives in this view
       setState((prev) => ({
         ...prev,
         messages: [
@@ -337,37 +418,58 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
             id: Date.now(),
             type: "agent" as const,
             sender: "You",
-            avatar: avatars.agent,
+            avatar: initials("You"),
             channel,
-            timestamp: getCurrentTime(),
+            timestamp: formatTime(new Date().toISOString()),
+            date: new Date().toISOString(),
             content,
             ...(channel === "Email" && emailSubject ? { emailSubject } : {}),
           },
         ],
-        composeText: "", // Clear compose after sending
+        composeText: "",
       }));
+      return true;
     },
-    [applyDetail, ticketDetail],
+    [applyDetail, ticketDetail, notify, fetchTickets, ticketQuery],
   );
 
   // Ticket status
   const setTicketStatus = useCallback(
-    (status: TicketStatus) => {
-      setState((prev) => ({ ...prev, ticketStatus: status }));
+    async (status: TicketStatus): Promise<boolean> => {
       const id = selectedRef.current;
-      if (id?.startsWith("SIM-")) {
-        fetch(`/api/helpdesk/sim/tickets/${id}`, {
+      if (!id?.startsWith("SIM-")) {
+        setState((prev) => ({ ...prev, ticketStatus: status }));
+        return true;
+      }
+      let previous: TicketStatus = "open";
+      setState((prev) => {
+        previous = prev.ticketStatus;
+        return { ...prev, ticketStatus: status };
+      });
+      try {
+        const res = await fetch(`/api/helpdesk/sim/tickets/${id}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ status: status === "resolved" ? "closed" : status }),
-        }).then(async (res) => {
-          if (res.ok && selectedRef.current === id) {
-            applyDetail((await res.json()) as TicketDetail, true);
-          }
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (selectedRef.current === id) applyDetail((await res.json()) as TicketDetail, true);
+        notify(
+          status === "closed"
+            ? `${id} closed`
+            : status === "pending"
+              ? `${id} marked as waiting on customer`
+              : `${id} reopened`,
+        );
+        fetchTickets(ticketQuery, 0, true);
+        return true;
+      } catch (err) {
+        setState((prev) => ({ ...prev, ticketStatus: previous }));
+        notify(`Couldn't update ${id}: ${err instanceof Error ? err.message : "error"}`, "error");
+        return false;
       }
     },
-    [applyDetail],
+    [applyDetail, notify, fetchTickets, ticketQuery],
   );
 
   // Compose
@@ -437,6 +539,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         ...state,
         ticketSource,
         setTicketSource,
+        statusFilter,
+        setStatusFilter,
+        sidePanel,
+        setSidePanel,
+        toasts,
+        notify,
+        dismissToast,
+        sending,
         refreshSelected,
         tickets,
         ticketTotal,

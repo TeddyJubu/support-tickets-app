@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
 import { DashboardProvider } from "./components/context/dashboard-context";
 import { TicketingTools } from "./components/ticketing-tools";
@@ -8,6 +9,9 @@ import {
   TicketHeader,
   ConversationArea,
   CopilotPanel,
+  Toaster,
+  ShortcutsDialog,
+  useHotkeys,
 } from "./components/layout";
 
 const SYSTEM_PROMPT = `You are an AI assistant helping Buttons Bebe's customer support agents (a children's clothing store).
@@ -17,6 +21,28 @@ The open ticket, its Shopify customer and their recent tickets are in your conte
 
 **Response Style:**
 Be concise by default. Tools display UI cards with full details, so don't repeat that data in your response. Keep it brief and actionable - elaborate only when the agent asks for more details.`;
+
+function Workspace() {
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const showShortcuts = useCallback(() => setShortcutsOpen(true), []);
+  const hideShortcuts = useCallback(() => setShortcutsOpen(false), []);
+  useHotkeys(showShortcuts);
+
+  return (
+    <div className="flex h-dvh overflow-hidden bg-background text-foreground">
+      <DemoSidebar onShowShortcuts={showShortcuts} />
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TicketHeader />
+        <div className="relative flex flex-1 overflow-hidden">
+          <ConversationArea />
+          <CopilotPanel />
+        </div>
+      </main>
+      <Toaster />
+      <ShortcutsDialog open={shortcutsOpen} onClose={hideShortcuts} />
+    </div>
+  );
+}
 
 export default function SupportTicketsPage() {
   return (
@@ -28,16 +54,7 @@ export default function SupportTicketsPage() {
         maxIterations={4}
       >
         <TicketingTools />
-        <div className="h-screen flex bg-background overflow-hidden text-foreground">
-          <DemoSidebar />
-          <main className="flex-1 flex flex-col overflow-hidden min-w-0">
-            <TicketHeader />
-            <div className="flex-1 flex overflow-hidden">
-              <ConversationArea />
-              <CopilotPanel />
-            </div>
-          </main>
-        </div>
+        <Workspace />
       </CopilotProvider>
     </DashboardProvider>
   );

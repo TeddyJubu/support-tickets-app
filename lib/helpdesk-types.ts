@@ -17,6 +17,8 @@ export interface TicketSummary {
   simulated?: boolean;
   /** Simulated tickets only: open | pending | closed */
   status?: string | null;
+  /** Simulated tickets only: last activity */
+  updatedAt?: string | null;
 }
 
 export interface Ticket extends TicketSummary {

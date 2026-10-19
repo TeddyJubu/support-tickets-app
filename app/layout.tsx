@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Support Tickets Demo",
-  description: "AI-powered customer support ticket management system",
+  title: "Buttons Bebe · Support",
+  description: "Buttons Bebe support inbox with an AI copilot",
   // Contains customer data: keep it out of search engines
   robots: {
     index: false,

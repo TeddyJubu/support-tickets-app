@@ -108,6 +108,7 @@ function toSummary(r: Row): TicketSummary {
     customerMessages: c.customer,
     simulated: true,
     status: s(r.status),
+    updatedAt: iso(r.updated_at),
   };
 }
 
@@ -166,19 +167,29 @@ const TICKET_SELECT = `SELECT t.*, c.first_name, c.last_name, c.email
 
 export function listSimTickets({
   q = "",
+  status = "",
   offset = 0,
   limit = 50,
 }: {
   q?: string;
+  /** open | pending | closed; empty for all */
+  status?: string;
   offset?: number;
   limit?: number;
 }) {
   const like = `%${q.trim().toLowerCase()}%`;
-  const where = q.trim()
-    ? `WHERE lower(t.id) LIKE ? OR lower(t.subject) LIKE ? OR lower(c.first_name || ' ' || c.last_name) LIKE ?
-       OR lower(c.email) LIKE ? OR lower(coalesce(t.order_name, '')) LIKE ?`
-    : "";
-  const params = q.trim() ? [like, like, like, like, like] : [];
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (q.trim()) {
+    clauses.push(`(lower(t.id) LIKE ? OR lower(t.subject) LIKE ? OR lower(c.first_name || ' ' || c.last_name) LIKE ?
+       OR lower(c.email) LIKE ? OR lower(coalesce(t.order_name, '')) LIKE ?)`);
+    params.push(like, like, like, like, like);
+  }
+  if (["open", "pending", "closed"].includes(status)) {
+    clauses.push(`t.status = ?`);
+    params.push(status);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const total = n(
     getDb()
       .prepare(`SELECT count(*) AS c FROM sim_tickets t LEFT JOIN sim_customers c ON c.id = t.customer_id ${where}`)

@@ -41,6 +41,8 @@ export interface TicketMessage {
   type: "system" | "customer" | "agent";
   content: string;
   timestamp: string;
+  /** Raw timestamp, for day dividers */
+  date?: string | null;
   sender?: string;
   avatar?: string;
   channel?: "Chat" | "Email" | "WhatsApp";
@@ -79,6 +81,17 @@ export interface DashboardContextType extends DashboardState {
   // Ticket list: simulator tickets or the historical export
   ticketSource: "sim" | "history";
   setTicketSource: (source: "sim" | "history") => void;
+  statusFilter: "all" | "open" | "pending" | "closed";
+  setStatusFilter: (filter: "all" | "open" | "pending" | "closed") => void;
+  // Right-hand panel; null when collapsed
+  sidePanel: "copilot" | "customer" | null;
+  setSidePanel: (panel: "copilot" | "customer" | null) => void;
+  // Toast notifications
+  toasts: Array<{ id: number; message: string; tone: "success" | "error" | "info" }>;
+  notify: (message: string, tone?: "success" | "error" | "info") => void;
+  dismissToast: (id: number) => void;
+  /** A reply is being sent */
+  sending: boolean;
   refreshSelected: () => Promise<void>;
   tickets: TicketSummary[];
   ticketTotal: number;
@@ -100,9 +113,9 @@ export interface DashboardContextType extends DashboardState {
     content: string,
     channel?: "Chat" | "Email",
     emailSubject?: string,
-  ) => void;
+  ) => Promise<boolean>;
   // Ticket status
-  setTicketStatus: (status: TicketStatus) => void;
+  setTicketStatus: (status: TicketStatus) => Promise<boolean>;
   // Compose
   setComposeText: (text: string) => void;
   // AI Insights
