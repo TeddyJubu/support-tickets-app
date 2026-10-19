@@ -4,27 +4,31 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Copy, Check, Mail, MessageCircle, Info, CornerDownRight } from "lucide-react";
 import type { TicketMessage } from "../types";
-import { Avatar } from "../ui";
+import { Avatar, copyText } from "../ui";
 
 interface MessageProps {
   message: TicketMessage;
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const label = copied === null ? "Copy message" : copied ? "Copied" : "Couldn't copy";
   return (
     <button
       type="button"
-      aria-label={copied ? "Copied" : "Copy message"}
-      title={copied ? "Copied" : "Copy message"}
-      onClick={() => {
-        navigator.clipboard?.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+      aria-label={label}
+      title={label}
+      onClick={async () => {
+        setCopied(await copyText(text));
+        setTimeout(() => setCopied(null), 1500);
       }}
       className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
     >
-      {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+      {copied ? (
+        <Check className="size-3.5 text-success" />
+      ) : (
+        <Copy className={cn("size-3.5", copied === false && "text-destructive")} />
+      )}
     </button>
   );
 }

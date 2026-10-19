@@ -137,6 +137,17 @@ export function Skeleton({ className }: { className?: string }) {
   return <div className={cn("animate-pulse rounded-md bg-muted", className)} />;
 }
 
+// Resolves false when the browser blocks clipboard access
+export async function copyText(text: string) {
+  try {
+    if (!navigator.clipboard) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Platform-aware modifier key label
 export function modKey() {
   if (typeof navigator === "undefined") return "Ctrl";

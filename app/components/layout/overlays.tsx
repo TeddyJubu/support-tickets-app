@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboard } from "../context/dashboard-context";
@@ -49,10 +49,12 @@ const isTyping = (target: EventTarget | null) => {
 };
 
 // Single-key shortcuts for moving through the inbox
-export function useHotkeys(onShowShortcuts: () => void) {
-  const { selectAdjacentTicket, setTicketStatus, ticketStatus, ticketDetail } = useDashboard();
+export function useHotkeys(onShowShortcuts: () => void, enabled = true) {
+  const { selectAdjacentTicket, setTicketStatus, ticketStatus, ticketDetail, selectedTicketId } =
+    useDashboard();
 
   useEffect(() => {
+    if (!enabled) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
       switch (e.key) {
@@ -69,8 +71,13 @@ export function useHotkeys(onShowShortcuts: () => void) {
           document.getElementById("reply-box")?.focus();
           break;
         case "e":
-          if (!ticketDetail?.ticket.simulated || ticketStatus === "closed") return;
-          setTicketStatus("closed");
+          if (
+            ticketDetail?.ticket.id !== selectedTicketId ||
+            !ticketDetail?.ticket.simulated ||
+            ticketStatus === "closed"
+          )
+            return;
+          setTicketStatus("closed", ticketDetail.ticket.id);
           break;
         case "?":
           onShowShortcuts();
@@ -82,15 +89,35 @@ export function useHotkeys(onShowShortcuts: () => void) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectAdjacentTicket, setTicketStatus, ticketStatus, ticketDetail, onShowShortcuts]);
+  }, [enabled, selectAdjacentTicket, setTicketStatus, ticketStatus, ticketDetail, selectedTicketId, onShowShortcuts]);
 }
 
 export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Escape closes; Tab stays inside the dialog; focus returns to where it was
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const previous = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return onClose();
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])',
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialogRef.current.contains(active) || (e.shiftKey ? active === first : active === last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -129,6 +156,7 @@ export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () 
       onMouseDown={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="shortcuts-title"

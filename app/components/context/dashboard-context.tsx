@@ -226,9 +226,15 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketDetail, setTicketDetail] = useState<TicketDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const detailRequest = useRef(0);
 
+  // Bumped by every first-page request; responses from an older list are dropped
+  const listRequest = useRef(0);
+
   const fetchTickets = useCallback(async (query: string, offset: number, quiet = false) => {
+    const request = offset === 0 ? ++listRequest.current : listRequest.current;
+    const current = () => request === listRequest.current;
     if (!quiet) setTicketsLoading(true);
     setTicketsError(null);
     try {
@@ -244,14 +250,15 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(`/api/helpdesk/tickets?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as TicketListResponse;
+      if (!current()) return [];
       setTickets((prev) => (offset === 0 ? data.tickets : [...prev, ...data.tickets]));
       setTicketTotal(data.total);
       return data.tickets;
     } catch (err) {
-      setTicketsError(err instanceof Error ? err.message : "Request failed");
+      if (current()) setTicketsError(err instanceof Error ? err.message : "Request failed");
       return [];
     } finally {
-      setTicketsLoading(false);
+      if (current()) setTicketsLoading(false);
     }
   }, []);
 
@@ -277,12 +284,17 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       selectedRef.current = id;
       setSelectedTicketId(id);
       setDetailLoading(true);
+      setDetailError(null);
       try {
         const res = await fetch(`/api/helpdesk/tickets/${id}`);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(res.status === 404 ? "Ticket not found" : `HTTP ${res.status}`);
         const detail = (await res.json()) as TicketDetail;
         if (request !== detailRequest.current) return;
         applyDetail(detail, false);
+      } catch (err) {
+        if (request === detailRequest.current) {
+          setDetailError(err instanceof Error ? err.message : "Request failed");
+        }
       } finally {
         if (request === detailRequest.current) setDetailLoading(false);
       }
@@ -351,12 +363,18 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   }, [fetchTickets, ticketQuery, tickets.length, ticketTotal, ticketsLoading]);
 
   const selectAdjacentTicket = useCallback(
-    (direction: -1 | 1) => {
+    async (direction: -1 | 1) => {
       const index = tickets.findIndex((t) => t.id === selectedTicketId);
+      if (index < 0) return;
       const next = tickets[index + direction];
-      if (next) selectTicket(next.id);
+      if (next) return selectTicket(next.id);
+      // At the end of the loaded page: fetch the next one and continue into it
+      if (direction === 1 && tickets.length < ticketTotal && !ticketsLoading) {
+        const more = await fetchTickets(ticketQuery, tickets.length);
+        if (more[0] && selectedRef.current === selectedTicketId) selectTicket(more[0].id);
+      }
     },
-    [tickets, selectedTicketId, selectTicket],
+    [tickets, selectedTicketId, selectTicket, ticketTotal, ticketsLoading, fetchTickets, ticketQuery],
   );
 
   // Message management
@@ -376,10 +394,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     ): Promise<boolean> => {
       if (!content.trim()) return false;
       const id = selectedRef.current;
-      if (id?.startsWith("SIM-")) {
+      if (!id || ticketDetail?.ticket.id !== id) {
+        notify("Wait for the ticket to finish loading, then send again", "error");
+        return false;
+      }
+      if (id.startsWith("SIM-")) {
         // Simulated tickets: save the reply so the simulated customer can answer it
         // Email tickets: really sends to the customer (password-protected route)
-        const isEmail = ticketDetail?.ticket.id === id && ticketDetail.ticket.tags === "email";
+        const isEmail = ticketDetail.ticket.tags === "email";
         setSending(true);
         try {
           const res = await fetch(
@@ -435,17 +457,20 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   // Ticket status
   const setTicketStatus = useCallback(
-    async (status: TicketStatus): Promise<boolean> => {
-      const id = selectedRef.current;
+    async (status: TicketStatus, ticketId?: string): Promise<boolean> => {
+      const id = ticketId ?? selectedRef.current;
+      const onScreen = () => selectedRef.current === id;
       if (!id?.startsWith("SIM-")) {
-        setState((prev) => ({ ...prev, ticketStatus: status }));
+        if (onScreen()) setState((prev) => ({ ...prev, ticketStatus: status }));
         return true;
       }
       let previous: TicketStatus = "open";
-      setState((prev) => {
-        previous = prev.ticketStatus;
-        return { ...prev, ticketStatus: status };
-      });
+      if (onScreen()) {
+        setState((prev) => {
+          previous = prev.ticketStatus;
+          return { ...prev, ticketStatus: status };
+        });
+      }
       try {
         const res = await fetch(`/api/helpdesk/sim/tickets/${id}`, {
           method: "PATCH",
@@ -464,7 +489,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         fetchTickets(ticketQuery, 0, true);
         return true;
       } catch (err) {
-        setState((prev) => ({ ...prev, ticketStatus: previous }));
+        if (onScreen()) setState((prev) => ({ ...prev, ticketStatus: previous }));
         notify(`Couldn't update ${id}: ${err instanceof Error ? err.message : "error"}`, "error");
         return false;
       }
@@ -559,6 +584,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         selectedTicketId,
         ticketDetail,
         detailLoading,
+        detailError,
         selectTicket,
         selectAdjacentTicket,
         addMessage,

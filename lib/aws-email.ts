@@ -57,5 +57,7 @@ export async function sendEmail(m: OutboundEmail) {
   });
   const body = (await res.json().catch(() => null)) as { MessageId?: string; message?: string } | null;
   if (!res.ok || !body?.MessageId) throw new Error(body?.message ?? `SES send failed: HTTP ${res.status}`);
-  return `<${body.MessageId}@${region}.amazonses.com>`;
+  // SES uses email.amazonses.com in us-east-1 and <region>.amazonses.com elsewhere
+  const domain = region === "us-east-1" ? "email.amazonses.com" : `${region}.amazonses.com`;
+  return `<${body.MessageId}@${domain}>`;
 }

@@ -23,20 +23,24 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDate, formatIntent } from "@/lib/helpdesk-format";
 import { useDashboard } from "../context/dashboard-context";
-import { IconButton, Kbd, Skeleton, StatusBadge, STATUS_META } from "../ui";
+import { IconButton, Kbd, Skeleton, StatusBadge, STATUS_META, copyText } from "../ui";
 import type { TicketStatus } from "../types";
 
 function StatusMenu({ disabled }: { disabled: boolean }) {
-  const { ticketStatus, setTicketStatus } = useDashboard();
-  const [open, setOpen] = useState(false);
+  const { ticketStatus, setTicketStatus, selectedTicketId } = useDashboard();
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  // Tied to the ticket it was opened on, so J/K closes it
+  const open = openFor !== null && openFor === selectedTicketId;
+  const setOpen = (value: boolean | ((o: boolean) => boolean)) =>
+    setOpenFor((typeof value === "function" ? value(open) : value) ? selectedTicketId : null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      if (!ref.current?.contains(e.target as Node)) setOpenFor(null);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenFor(null);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -76,11 +80,13 @@ function StatusMenu({ disabled }: { disabled: boolean }) {
               role="menuitemradio"
               aria-checked={ticketStatus === value}
               type="button"
+              disabled={disabled}
               onClick={() => {
+                const id = openFor;
                 setOpen(false);
-                if (value !== ticketStatus) setTicketStatus(value);
+                if (id && value !== ticketStatus) setTicketStatus(value, id);
               }}
-              className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-accent"
+              className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-accent disabled:opacity-50"
             >
               <Icon className={cn("mt-0.5 size-4", tone)} />
               <span className="flex-1">
@@ -135,12 +141,14 @@ export function TicketHeader() {
     selectAdjacentTicket,
     setTicketStatus,
     tickets,
+    ticketTotal,
     selectedTicketId,
     sidePanel,
     setSidePanel,
     notify,
   } = useDashboard();
-  const ticket = ticketDetail?.ticket;
+  // Never show (or act on) the previous ticket while the next one loads
+  const ticket = ticketDetail?.ticket.id === selectedTicketId ? ticketDetail.ticket : undefined;
   const index = tickets.findIndex((t) => t.id === selectedTicketId);
   const editable = !!ticket?.simulated;
 
@@ -175,7 +183,7 @@ export function TicketHeader() {
             type="button"
             aria-label="Next ticket (J)"
             title="Next ticket (J)"
-            disabled={index < 0 || index >= tickets.length - 1}
+            disabled={index < 0 || (index >= tickets.length - 1 && tickets.length >= ticketTotal)}
             onClick={() => selectAdjacentTicket(1)}
             className="flex h-4 w-7 items-center justify-center rounded-b-lg text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
           >
@@ -201,9 +209,9 @@ export function TicketHeader() {
                 <button
                   type="button"
                   title="Copy ticket ID"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(ticket.id);
-                    notify(`Copied ${ticket.id}`, "info");
+                  onClick={async () => {
+                    if (await copyText(ticket.id)) notify(`Copied ${ticket.id}`, "info");
+                    else notify("Couldn't copy: the browser blocked clipboard access", "error");
                   }}
                   className="group inline-flex shrink-0 items-center gap-1 rounded font-mono text-[11px] hover:text-foreground"
                 >
@@ -258,7 +266,7 @@ export function TicketHeader() {
           {editable && (
             <button
               type="button"
-              onClick={() => setTicketStatus(ticketStatus === "closed" ? "open" : "closed")}
+              onClick={() => setTicketStatus(ticketStatus === "closed" ? "open" : "closed", ticket?.id)}
               disabled={detailLoading}
               title={ticketStatus === "closed" ? "Reopen ticket" : "Close ticket (E)"}
               className={cn(

@@ -44,9 +44,11 @@ export function MessageComposer() {
   }, [composeText]);
 
   const send = async (thenClose = false) => {
-    if (!canSend) return;
-    const ok = await sendAgentMessage(composeText, "Email", ticket?.subject ? `Re: ${ticket.subject}` : undefined);
-    if (ok && thenClose && !archived) await setTicketStatus("closed");
+    if (!canSend || !ticket) return;
+    // Close the ticket the reply went to, even if the agent has moved on
+    const id = ticket.id;
+    const ok = await sendAgentMessage(composeText, "Email", ticket.subject ? `Re: ${ticket.subject}` : undefined);
+    if (ok && thenClose && !archived) await setTicketStatus("closed", id);
   };
 
   const draftWithAi = () => {

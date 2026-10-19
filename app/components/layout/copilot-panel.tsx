@@ -12,7 +12,7 @@ import {
   formatRelative,
 } from "@/lib/helpdesk-format";
 import { useDashboard } from "../context/dashboard-context";
-import { Avatar, IconButton, StatusBadge } from "../ui";
+import { Avatar, IconButton, StatusBadge, copyText } from "../ui";
 import { ticketStatusOf } from "./demo-sidebar";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -71,9 +71,9 @@ function CustomerDetails() {
               <button
                 type="button"
                 title="Copy email"
-                onClick={() => {
-                  navigator.clipboard?.writeText(email);
-                  notify("Email copied", "info");
+                onClick={async () => {
+                  if (await copyText(email)) notify("Email copied", "info");
+                  else notify("Couldn't copy: the browser blocked clipboard access", "error");
                 }}
                 className="group flex max-w-full items-center gap-1.5 hover:text-foreground"
               >

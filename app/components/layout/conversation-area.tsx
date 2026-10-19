@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useLayoutEffect, useRef } from "react";
-import { Inbox } from "lucide-react";
+import { Inbox, AlertCircle, RefreshCw } from "lucide-react";
 import { formatDay } from "@/lib/helpdesk-format";
 import { useDashboard } from "../context/dashboard-context";
 import { Skeleton } from "../ui";
@@ -26,11 +26,13 @@ function ConversationSkeleton() {
 }
 
 export function ConversationArea() {
-  const { messages, ticketDetail, selectedTicketId, detailLoading, ticketsLoading } = useDashboard();
+  const { messages, ticketDetail, selectedTicketId, detailError, ticketsLoading, selectTicket } =
+    useDashboard();
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastTicket = useRef<string | null>(null);
   const lastCount = useRef(0);
-  const switching = detailLoading && ticketDetail?.ticket.id !== selectedTicketId;
+  // Only the selected ticket's own detail is shown, so the composer can't reply to the wrong one
+  const loaded = !!ticketDetail && ticketDetail.ticket.id === selectedTicketId;
 
   // Jump to the newest message when a ticket opens; glide when a new one arrives
   useLayoutEffect(() => {
@@ -81,7 +83,23 @@ export function ConversationArea() {
                 Pick a ticket from the list to read the conversation and reply.
               </p>
             </div>
-          ) : switching || !ticketDetail ? (
+          ) : detailError && !loaded ? (
+            <div className="flex flex-col items-center py-24 text-center" role="alert">
+              <div className="flex size-14 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+                <AlertCircle className="size-6" />
+              </div>
+              <p className="mt-4 text-base font-semibold text-foreground">Couldn&apos;t open this ticket</p>
+              <p className="mt-1 text-sm text-muted-foreground">{detailError}</p>
+              <button
+                type="button"
+                onClick={() => selectedTicketId && selectTicket(selectedTicketId)}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-background px-3 py-1.5 text-sm font-medium text-foreground shadow-soft ring-1 ring-border hover:bg-accent"
+              >
+                <RefreshCw className="size-3.5" />
+                Try again
+              </button>
+            </div>
+          ) : !loaded ? (
             <ConversationSkeleton />
           ) : (
             <div className="space-y-1 animate-in fade-in duration-200">
@@ -107,7 +125,7 @@ export function ConversationArea() {
         </div>
       </div>
 
-      {ticketDetail && <MessageComposer />}
+      {loaded && <MessageComposer key={ticketDetail.ticket.id} />}
     </div>
   );
 }

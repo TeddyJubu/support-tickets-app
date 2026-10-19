@@ -105,6 +105,8 @@ export interface DashboardContextType extends DashboardState {
   selectedTicketId: string | null;
   ticketDetail: TicketDetail | null;
   detailLoading: boolean;
+  /** The selected ticket failed to load */
+  detailError: string | null;
   selectTicket: (id: string) => void;
   selectAdjacentTicket: (direction: -1 | 1) => void;
   // Message management
@@ -115,7 +117,8 @@ export interface DashboardContextType extends DashboardState {
     emailSubject?: string,
   ) => Promise<boolean>;
   // Ticket status
-  setTicketStatus: (status: TicketStatus) => Promise<boolean>;
+  /** Defaults to the selected ticket */
+  setTicketStatus: (status: TicketStatus, ticketId?: string) => Promise<boolean>;
   // Compose
   setComposeText: (text: string) => void;
   // AI Insights

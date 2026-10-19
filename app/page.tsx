@@ -26,7 +26,7 @@ function Workspace() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const showShortcuts = useCallback(() => setShortcutsOpen(true), []);
   const hideShortcuts = useCallback(() => setShortcutsOpen(false), []);
-  useHotkeys(showShortcuts);
+  useHotkeys(showShortcuts, !shortcutsOpen);
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">

@@ -305,7 +305,8 @@ export interface SimTicketInput {
 
 export function createSimTicket(input: SimTicketInput) {
   const d = getDb();
-  d.exec("BEGIN");
+  // A savepoint, so this also works inside ingestEmail's transaction
+  d.exec("SAVEPOINT create_ticket");
   try {
     const customerId = upsertSimCustomer(input.customer);
     const res = d
@@ -324,10 +325,11 @@ export function createSimTicket(input: SimTicketInput) {
       `${input.customer.firstName} ${input.customer.lastName}`,
       input.body,
     );
-    d.exec("COMMIT");
+    d.exec("RELEASE create_ticket");
     return id;
   } catch (err) {
-    d.exec("ROLLBACK");
+    d.exec("ROLLBACK TO create_ticket");
+    d.exec("RELEASE create_ticket");
     throw err;
   }
 }
@@ -410,12 +412,21 @@ export function ingestEmail(input: SimTicketInput & { messageId: string; refs: s
   }
 
   const created = !ticketId;
-  if (ticketId) {
-    addSimMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim());
-  } else {
-    ticketId = createSimTicket(input);
+  // Message and Message-ID commit together, so an SNS retry after a crash can't append twice
+  d.exec("SAVEPOINT ingest_email");
+  try {
+    if (ticketId) {
+      addSimMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim());
+    } else {
+      ticketId = createSimTicket(input);
+    }
+    d.prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(input.messageId, ticketId);
+    d.exec("RELEASE ingest_email");
+  } catch (err) {
+    d.exec("ROLLBACK TO ingest_email");
+    d.exec("RELEASE ingest_email");
+    throw err;
   }
-  d.prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(input.messageId, ticketId);
   return { ticketId, created, duplicate: false };
 }
 
