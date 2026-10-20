@@ -374,7 +374,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
                 </>
               ) : ticketSource === "sim" ? (
                 <>
-                  Run <code className="rounded bg-muted px-1 font-mono">npm run simulate</code> to create some.
+                  Email <span className="font-medium text-foreground">support@teddyonfriday.com</span> to create one.
                 </>
               ) : (
                 "The archive is empty."
