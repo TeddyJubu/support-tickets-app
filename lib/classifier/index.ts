@@ -3,7 +3,7 @@
 // ticket's priority, mark it sensitive and ask for an owner alert, but never lower anything.
 
 import { ANGRY, HIGH_MAIN, HIGH_PORT, IMMEDIATE_MAIN, IMMEDIATE_PORT, INTENTS, MANAGER, WEAK_DAMAGE, WEAK_OMISSION, type Rule } from "./tables";
-import { bound, dropBoilerplate, foldQuotes, isExclaiming, isShouting, shouldDraft, unquoted } from "./text";
+import { bound, dropBoilerplate, foldQuotes, isExclaiming, isShouting, looksLikeSpam, shouldDraft, unquoted } from "./text";
 
 export type Severity = "low" | "normal" | "high" | "critical";
 export const SEVERITY_RANK: Record<Severity, number> = { low: 0, normal: 1, high: 2, critical: 3 };
@@ -79,8 +79,12 @@ export function classify(input: {
   const rawSubject = input.subject ?? "";
   const rawMessage = input.message ?? "";
   const latest = unquoted(rawMessage);
-  if ((rawMessage.trim() && !latest) || !shouldDraft(latest, rawSubject).ok) {
-    return { priority: "normal", sensitive: false, notifyOwner: false, shouldDraft: false, reason: "No new request (acknowledgement only)", matched: [] };
+  const gate = shouldDraft(latest, rawSubject);
+  if ((rawMessage.trim() && !latest) || !gate.ok) {
+    return { priority: "normal", sensitive: false, notifyOwner: false, shouldDraft: false, reason: gate.reason ? `No new request (${gate.reason})` : "No new request", matched: [] };
+  }
+  if (looksLikeSpam(rawSubject, latest)) {
+    return { priority: "normal", sensitive: false, notifyOwner: false, shouldDraft: false, reason: "Looks like spam (no store question)", matched: [] };
   }
   const subject = rawSubject.replace(BROKEN_PORTAL, "return portal unavailable");
   const message = rawMessage.replace(BROKEN_PORTAL, "return portal unavailable");

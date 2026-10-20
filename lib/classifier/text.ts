@@ -95,6 +95,19 @@ const HAPPY_EMOTICON = /[:;=8][-'~^]?[)\]>DdPpOo3*]+/g;
 const SUBJECT_NOISE =
   /^\s*((re|fw|fwd|aw|sv)\s*:\s*)+|\border[\s#]*\d+|#\s*\d+|\b(no\s+subject|message\s+from\s+(the\s+)?contact\s+form|contact\s+form|order\s+confirmation|your\s+order|buttons\s+bebe|customer\s+(service|support)|support\s+request|new\s+message|website\s+enquiry|enquiry|update)\b|\b(your|our|my|the|a|an|order|orders|ticket|case|ref|reference)\b/gi;
 
+const SUBJECT_REQUEST =
+  /\b(can|could|do|does|did|is|are|where|when|how|what|why|which|need|want|please|help|return|exchange|refund|cancel|change|size|sizing|ship|shipping|deliver|delivery|track|tracking|missing|damaged|wrong|broken|available|stock)\b/i;
+
+// Unsolicited marketing and prize scams: nothing for support to answer
+const SPAM =
+  /\b(click here|win (?:a|an) free|you(?:'ve| have) won|claim your (?:prize|reward)|congratulations,? you|crypto(?:currency)? (?:investment|opportunity)|bitcoin|seo services?|backlinks|guest post|increase your (?:traffic|sales)|web design services|casino)\b/i;
+const STORE_CONTEXT = /\b(order|ordered|delivery|delivered|package|return|refund|exchange|size|dress|tracking|shipping|my daughter|my son|my baby)\b/i;
+
+export function looksLikeSpam(subject: string, message: string) {
+  const text = `${subject} ${message}`;
+  return SPAM.test(text) && !STORE_CONTEXT.test(text);
+}
+
 function stripDecoration(text: string) {
   let t = text.replace(/[\u{1F3FB}-\u{1F3FF}︎️​‌‍﻿]/gu, "");
   for (const e of SAFE_EMOJI) t = t.split(e).join("");
@@ -123,6 +136,9 @@ export function shouldDraft(message: string, subject = ""): { ok: boolean; reaso
   if (m.length > 20_000 || s.length > 2_000) return { ok: true };
   if (!carriesNoContent(m)) return { ok: true };
   if (m.trim()) return { ok: false, reason: "no question to answer (thanks/acknowledgement only)" };
-  if (!carriesNoContent(s.replace(SUBJECT_NOISE, " "))) return { ok: true };
+  // A blank body: the subject counts only if it asks or requests something
+  const topic = s.replace(SUBJECT_NOISE, " ");
+  if (!carriesNoContent(topic) && (topic.includes("?") || SUBJECT_REQUEST.test(topic))) return { ok: true };
+  if (!carriesNoContent(topic)) return { ok: false, reason: "empty message (the subject asks nothing)" };
   return { ok: false, reason: stripDecoration(`${s} ${m}`).trim() ? "no question to answer (thanks/acknowledgement only)" : "empty message" };
 }

@@ -74,6 +74,10 @@ test("nothing-to-answer gate keeps questions and decisions", () => {
   }
   assert.equal(shouldDraft("", "Do you ship to Canada?").ok, true);
   assert.equal(shouldDraft("", "").ok, false);
+  assert.equal(shouldDraft("", "Empty / survey").ok, false, "blank body, subject asks nothing");
+  assert.equal(shouldDraft("", "Need to return the dress").ok, true);
+  assert.equal(classify({ subject: "Spam", message: "asdkfj CLICK HERE to win a free iphone www.spam.example" }).shouldDraft, false);
+  assert.equal(classify({ subject: "Order", message: "Click here for the tracking link? My order never arrived" }).shouldDraft, true, "store context wins");
 });
 
 // ---------- cleaner and markers ----------

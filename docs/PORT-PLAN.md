@@ -121,11 +121,11 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 10 — Quality gates
 
-- [ ] **10.1 Scenario harness (M).** Copy `testing/scenarios.json` (48) and `reliability-scenarios.json` (10); `npm run qa` runs the drafter offline against them (no sends, scratch DB) and writes a report for human A–E grading. Live-model runs are manual.
-- [ ] **10.2 Adversarial tests (M).** Prompt injection in customer messages, forged markers, oversized/odd emails, queue crash recovery, auth bypass attempts on every route.
-- [ ] **10.3 Browser tests (M).** Playwright: login, views/filters, bulk actions, draft strip, review-and-send, KB editor. Runs in CI.
-- [ ] **10.4 Release gate (S).** `npm run verify` = lint + typecheck + unit + Playwright + scenario harness (offline) + secret scan; CI runs it.
-- [ ] **10.5 Auto-deploy (M, optional).** On green `main`: restricted SSH command on the VPS that fetches the commit, verifies, builds, swaps and restarts, with rollback. Only after decision 5.
+- [x] **10.1 Scenario harness (M).** Copy `testing/scenarios.json` (48) and `reliability-scenarios.json` (10); `npm run qa` runs the drafter offline against them (no sends, scratch DB) and writes a report for human A–E grading. Live-model runs are manual.
+- [x] **10.2 Adversarial tests (M).** Prompt injection in customer messages, forged markers, oversized/odd emails, queue crash recovery, auth bypass attempts on every route.
+- [x] **10.3 Browser tests (M).** Playwright: login, views/filters, bulk actions, draft strip, review-and-send, KB editor. Runs in CI.
+- [x] **10.4 Release gate (S).** `npm run verify` = lint + typecheck + unit + Playwright + scenario harness (offline) + secret scan; CI runs it.
+- [ ] **10.5 Auto-deploy (M, optional, not built: waits for decision 5, an SSH deploy key and GitHub secrets).** On green `main`: restricted SSH command on the VPS that fetches the commit, verifies, builds, swaps and restarts, with rollback. Only after decision 5.
 
 ## Suggested first slice
 
