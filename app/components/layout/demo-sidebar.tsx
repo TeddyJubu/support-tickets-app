@@ -106,18 +106,6 @@ function TicketRow({
   const name = ticket.customerName ?? ticket.customerEmail ?? "Unknown customer";
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        // Keys pressed on the bulk-select checkbox belong to the checkbox
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      aria-current={selected ? "true" : undefined}
       data-ticket-id={ticket.id}
       className={cn(
         "group relative flex w-full gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors",
@@ -126,20 +114,27 @@ function TicketRow({
           : "hover:bg-sidebar-accent/60",
       )}
     >
+      {/* The whole row is this button; the bulk-select checkbox sits beside it, not inside */}
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected ? "true" : undefined}
+        aria-label={`${name}: ${ticket.subject ?? "(no subject)"}`}
+        className="absolute inset-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
       {selected && (
         <span className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-primary" aria-hidden />
       )}
       {onCheck ? (
-        <span className="relative mt-0.5 size-7 shrink-0">
+        <span className="pointer-events-none relative mt-0.5 size-7 shrink-0">
           <Avatar name={name} size="sm" className={cn("absolute inset-0 transition-opacity", (selecting || checked) && "opacity-0", "group-hover:opacity-0")} />
           <input
             type="checkbox"
             checked={!!checked}
             onChange={onCheck}
-            onClick={(e) => e.stopPropagation()}
             aria-label={`Select ${ticket.id}`}
             className={cn(
-              "absolute inset-1.5 size-4 cursor-pointer accent-primary transition-opacity",
+              "pointer-events-auto absolute inset-1.5 z-10 size-4 cursor-pointer accent-primary transition-opacity",
               selecting || checked ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
             )}
           />
@@ -148,7 +143,7 @@ function TicketRow({
         <Avatar name={name} size="sm" className="mt-0.5" />
       )}
       {ticket.unread && <span className="absolute left-1 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary" title="Unread" />}
-      <div className="min-w-0 flex-1">
+      <div className="pointer-events-none min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span
             className={cn(

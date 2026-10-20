@@ -200,4 +200,14 @@ test("product sync writes one article per brand and refuses a collapsed catalog"
   assert.match(amalie.raw, /## Tulle Dress[\s\S]*\$89\.00–\$99\.00[\s\S]*Soft tulle/);
   assert.match(amalie.raw, /Final sale: yes/);
   assert.ok(!existsSync(join(kbDir, "products", "gone-brand.md")));
+
+  // An export that lost most products is refused and the published files stay
+  const shrink = new DatabaseSync(join(scratch, "helpdesk.db"));
+  shrink.exec(`DELETE FROM products WHERE handle IN ('tulle-dress', 'lace-top')`);
+  shrink.close();
+  const refused = syncProducts();
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /was 3/);
+  assert.match(files.readArticle("products/petite-amalie.md").raw, /## Tulle Dress/);
+  assert.ok(existsSync(join(kbDir, "products", "bebe-organic.md")));
 });

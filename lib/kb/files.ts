@@ -107,9 +107,9 @@ export function safePath(path: string, folders = FOLDERS) {
   return `${folder}/${name}`;
 }
 
-export function listArticles(): Article[] {
+export function listArticles(folders: string[] = FOLDERS): Article[] {
   const out: Article[] = [];
-  for (const folder of FOLDERS) {
+  for (const folder of folders.filter((f) => FOLDERS.includes(f))) {
     const dir = join(kbDir(), folder);
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir).sort()) {

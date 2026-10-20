@@ -56,7 +56,7 @@ function parseVerdict(raw: string): Verdict | null {
   }
   if (!json || typeof json !== "object") return null;
   const action = json.action === "needs_staff" ? "needs_staff" : json.action === "reply" ? "reply" : null;
-  const severity = (typeof json.severity === "string" && json.severity in SEVERITY_RANK ? json.severity : null) as Severity | null;
+  const severity = (typeof json.severity === "string" && Object.hasOwn(SEVERITY_RANK, json.severity) ? json.severity : null) as Severity | null;
   if (!action || !severity) return null;
   return {
     action,

@@ -28,6 +28,8 @@ export async function POST(
   if (author === "agent" || author === "note") {
     const actor = actorFromRequest(request);
     if (!actor) return signInRequired();
+    // Internal notes are signed by a person; the simulator/CLI key can't write them
+    if (author === "note" && actor.kind !== "staff") return signInRequired();
     // Staff messages are signed with the signed-in name, never a name the client sends
     sender = actor.kind === "staff" ? actor.user.displayName : (body.sender ?? "Support (CLI)");
     // Staff replies go through review-and-confirm (/api/helpdesk/tickets/[id]/send); only the

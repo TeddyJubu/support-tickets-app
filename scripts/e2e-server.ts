@@ -3,7 +3,7 @@
 // or store credentials are passed on, so nothing can leave the machine.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -42,7 +42,14 @@ await rebuildIndex("e2e");
 
 // No AI, email or store credentials: nothing can leave the machine
 const env: NodeJS.ProcessEnv = { ...process.env, HELPDESK_DATA_DIR: data, HELPDESK_KB_DIR: join(data, "kb"), AUTO_DRAFTS: "0" };
-for (const k of Object.keys(env)) if (/CLOUDFLARE|AWS|SHOP_|INBOUND_|ALERT_|OUTBOUND/.test(k)) delete env[k];
+// Next loads .env.local from the project folder but never overrides a variable that is set,
+// even to "": blank every credential, including ones only that file defines
+const SECRET = /CLOUDFLARE|AWS|SHOP_|INBOUND_|ALERT_|OUTBOUND|SIM_API_KEY/;
+let fileKeys: string[] = [];
+try {
+  fileKeys = [...readFileSync(join(root, ".env.local"), "utf8").matchAll(/^\s*([A-Z0-9_]+)\s*=/gm)].map((m) => m[1]);
+} catch {}
+for (const k of new Set([...Object.keys(env), ...fileKeys])) if (SECRET.test(k)) env[k] = "";
 const child = spawn(process.execPath, [join(root, "node_modules/next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", port], {
   cwd: root,
   env,

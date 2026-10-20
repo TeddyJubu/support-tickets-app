@@ -8,7 +8,7 @@ const PATTERNS: Array<[kind: string, re: RegExp, placeholder: string]> = [
   ["url", /https?:\/\/[^\s)>\]]+/gi, "[link]"],
   ["tracking", /\b(1Z[0-9A-Z]{16}|\d{12,22})\b/g, "[tracking]"],
   ["order_hash", /#\s?S?\d{3,}/gi, "[order]"],
-  ["order_word", /\b(order|order\s*#|order\s*no\.?)\s*[:#]?\s*S?\d{3,}\b/gi, "[order]"],
+  ["order_word", /\b(order|order\s*#|order\s*no\.?|order\s+number)\s*[:#]?\s*S?\d{3,}\b/gi, "[order]"],
   ["payment_card", /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g, "[payment-card]"],
   ["po_box", /\bP\.?\s*O\.?\s+Box\s+[A-Z0-9-]+\b/gi, "[address]"],
   [

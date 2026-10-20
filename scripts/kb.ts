@@ -35,11 +35,18 @@ async function main() {
     }
     console.log(`copied ${copied} articles into ${kbDir()} (existing files kept); run: npm run kb -- index`);
   } else if (command === "index") {
-    console.log(await rebuildIndex("cli"));
+    const status = await rebuildIndex("cli");
+    console.log(status);
+    if (status.state !== "idle") process.exitCode = 1;
   } else if (command === "products") {
     const sync = syncProducts();
     console.log(sync);
-    if (sync.ok) console.log(await rebuildIndex("product-sync"));
+    if (!sync.ok) process.exitCode = 1;
+    else {
+      const status = await rebuildIndex("product-sync");
+      console.log(status);
+      if (status.state !== "idle") process.exitCode = 1;
+    }
   } else if (command === "search") {
     const out = await searchKb(rest.join(" "), 5);
     console.log(`mode ${out.mode}; ${out.notices.length} active notices`);

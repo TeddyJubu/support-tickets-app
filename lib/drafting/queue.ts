@@ -86,6 +86,8 @@ export function queueDraft(d: DatabaseSync, ticketId: string, messageId: number)
 
 /** Claims the next runnable job: oldest first, but an urgent one within the next 25 goes ahead */
 export function claimNextJob(d: DatabaseSync, workerId: string): Job | null {
+  // AUTO_DRAFTS=0 also pauses jobs already queued (they wait until drafting is back on)
+  if (!autoDraftsEnabled()) return null;
   return transaction(d, () => {
     const rows = d
       .prepare(

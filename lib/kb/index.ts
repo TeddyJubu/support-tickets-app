@@ -3,7 +3,8 @@
 // it, then swaps it in with a rename; if anything fails, the last good index stays.
 
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "../db";
 import { embed } from "../workers-ai";
@@ -52,22 +53,39 @@ function lockHeld() {
   }
 }
 
+/** Returns this run's lock token, or null when another build holds the lock */
 function acquireLock() {
   mkdirSync(dataDir(), { recursive: true });
   if (existsSync(lockPath()) && !lockHeld()) rmSync(lockPath(), { force: true });
   try {
-    closeSync(openSync(lockPath(), "wx"));
-    return true;
+    const token = randomBytes(8).toString("hex");
+    const fd = openSync(lockPath(), "wx");
+    writeSync(fd, token);
+    closeSync(fd);
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+const ownsLock = (token: string) => {
+  try {
+    return readFileSync(lockPath(), "utf8") === token;
   } catch {
     return false;
   }
-}
+};
 
 const toBlob = (v: number[]) => Buffer.from(new Float32Array(v).buffer);
 
 /** Rebuild the index. Resolves with the final status; never throws. */
 export async function rebuildIndex(reason = "manual"): Promise<IndexStatus> {
-  if (!acquireLock()) return { ...indexStatus(), state: "running" };
+  const token = acquireLock();
+  if (!token) return { ...indexStatus(), state: "running" };
+  // Renew the lease while embedding (a big catalog can take minutes)
+  const lease = setInterval(() => {
+    if (ownsLock(token)) utimesSync(lockPath(), new Date(), new Date());
+  }, 60_000);
   const startedAt = new Date().toISOString();
   writeStatus({ state: "running", startedAt, reason });
   const building = `${kbDbPath()}.building-${process.pid}`;
@@ -136,6 +154,7 @@ export async function rebuildIndex(reason = "manual"): Promise<IndexStatus> {
     writeStatus(status);
     return status;
   } finally {
-    rmSync(lockPath(), { force: true });
+    clearInterval(lease);
+    if (ownsLock(token)) rmSync(lockPath(), { force: true });
   }
 }

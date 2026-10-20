@@ -20,7 +20,7 @@ Hard rules:
 
 - Never print secrets from `.env.local`.
 - The demo store holds real customer data: only write simulated rows (`#S…` orders, `@customers.bb-sim.test` emails), never touch real ones or the `shop-sim` Worker. Store reads are limited to simulated customers and `#S` orders.
-- The site is on the public internet: every page and API is behind staff sign-in (`proxy.ts`). Keep it that way; never add a public endpoint that returns store, customer or ticket data.
+- The site is on the public internet: pages and APIs are behind staff sign-in (`proxy.ts`). The exceptions: `/login`, `/api/auth/login`, `/api/health` and `/api/ready` are public (no data); the SES webhook checks its own token; and `/api/helpdesk/*` also accepts the simulator/CLI key (`SIM_API_KEY`), so routes there that return customer, store or draft data must call `requireStaff` themselves. Never add a public endpoint that returns store, customer or ticket data.
 - Staff replies only go out through review and confirm (`lib/sending.ts`). Nothing sends to a customer automatically; the AI only drafts.
 - `data/` (databases, KB articles, backups, keys) is never committed.
 - Ask before resetting data or changing Caddy, systemd or Cloudflare settings.

@@ -33,6 +33,8 @@ export function MessageComposer() {
   } = useDashboard();
   // Internal notes are never sent to the customer
   const [mode, setMode] = useState<"reply" | "note">("reply");
+  // A note has its own text (per ticket), so switching tabs never sends a note as a reply
+  const [note, setNote] = useState({ ticketId: "", text: "" });
   const { sendMessage, isLoading: copilotBusy } = useCopilot();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -42,12 +44,16 @@ export function MessageComposer() {
   const recipientName =
     ticketDetail?.customer?.name ?? ticket?.customerName ?? "the customer";
   const recipientEmail = ticketDetail?.customer?.email ?? ticket?.customerEmail;
+  const noteText = note.ticketId === ticket?.id ? note.text : "";
+  const text = mode === "note" ? noteText : composeText;
+  const setText = (value: string) =>
+    mode === "note" ? setNote({ ticketId: ticket?.id ?? "", text: value }) : setComposeText(value);
   // Inbox replies need Read & write and no unconfirmed earlier send; notes don't
   const replyLocked =
     !archived &&
     mode === "reply" &&
     (!sendAccessUntil || !!ticketDetail?.pendingSend);
-  const canSend = composeText.trim().length > 0 && !sending && !replyLocked;
+  const canSend = text.trim().length > 0 && !sending && !replyLocked;
 
   // Grow with the text, up to a cap
   useLayoutEffect(() => {
@@ -55,7 +61,7 @@ export function MessageComposer() {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`;
-  }, [composeText]);
+  }, [text]);
 
   // A drafted reply lands here from the copilot: bring it into focus
   const prevText = useRef(composeText);
@@ -68,7 +74,8 @@ export function MessageComposer() {
   const send = async (thenClose = false) => {
     if (!canSend || !ticket) return;
     if (mode === "note") {
-      await addNote(composeText);
+      const id = ticket.id;
+      if (await addNote(noteText)) setNote((n) => (n.ticketId === id ? { ticketId: id, text: "" } : n));
       return;
     }
     // Inbox tickets open Review; closing happens after the confirmed send
@@ -185,8 +192,8 @@ export function MessageComposer() {
           <textarea
             ref={textareaRef}
             id="reply-box"
-            value={composeText}
-            onChange={(e) => setComposeText(e.target.value)}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
@@ -219,11 +226,11 @@ export function MessageComposer() {
               )}
               Draft with AI
             </button>
-            {composeText && !sending && (
+            {text && !sending && (
               <button
                 type="button"
                 onClick={() => {
-                  setComposeText("");
+                  setText("");
                   textareaRef.current?.focus();
                 }}
                 className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

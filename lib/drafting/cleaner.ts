@@ -36,6 +36,8 @@ const PARTICIPLES =
   "switched|updated|changed|cancelled|canceled|replaced|shipped|sent|issued|processed|refunded|credited|created|prioritized|held|flagged|contacted|notified|removed|added|applied|arranged|left|corrected|resolved";
 // After "we can": only money and order changes count as a promise ("we can refund you")
 const CAN_VERBS = "refund|credit|issue|process|cancel|replace|invoice|prioritize|hold|remove|apply|arrange|resolve|change your order|change the order";
+// Past-tense claims of a store action ("we processed / refunded / cancelled")
+const ORDER_PAST = "processed|refunded|credited|issued|cancelled|canceled|replaced|shipped|sent out|changed|updated|corrected|resolved|applied|arranged|removed|added";
 const OBJECTS = "label|refund|credit|replacement|invoice|warehouse|order|shipment|package|address";
 const UPDATE = "update(?!\\s+(?:you|yourself|us|the\\s+customer)\\b)";
 const WHO = "(?:we|i|our team|the team|the store|store|warehouse|a human|human)";
@@ -51,6 +53,8 @@ const ACTION_CLAIM = new RegExp(
     `\\b(?:we|i)\\s*['’]ll\\s+take\\s+care\\s+of\\s+(?:it|this|that|your\\s+order)\\b`,
     `\\b(?:we|i|our team|the team)\\s+(?:have|has|just|already)\\s+(?:${PARTICIPLES})\\b`,
     `\\b(?:we|i)\\s*['\u2019]ve\\s+(?:just\\s+|already\\s+)?(?:${PARTICIPLES})\\b`,
+    // Simple past: "we processed your refund", "I cancelled the order"
+    `\\b(?:we|i|our team|the team)\\s+(?:just\\s+|already\\s+)?(?:${ORDER_PAST})\\b`,
     `\\b${WHO}\\s+(?:will|would|are going to|is going to)\\s+send\\b[^.!?\\n]{0,80}\\b(?:prepaid\\s+|return\\s+)?(?:${OBJECTS})\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,
     `\\b(?:your\\s+)?(?:refund|replacement|exchange|cancellation)\\s+(?:has\\s+been|is\\s+being|was)\\s+(?:issued|processed|approved|sent|completed)\\b`,
   ].join("|"),
@@ -91,8 +95,20 @@ function dedupe(text: string) {
     seen.add(key);
     kept.push(b);
   }
-  // A body repeated back-to-back inside one block ("A B A B")
-  return { text: kept.join("\n\n"), removed };
+  // A body repeated back-to-back inside one paragraph ("A B A B" → "A B")
+  const collapsed = kept.map((b) => {
+    const sentences = b.match(/[^.!?]+[.!?]+(?:["')\]]+)?\s*|[^.!?]+$/g) ?? [b];
+    const n = sentences.length;
+    if (n >= 2 && n % 2 === 0) {
+      const half = sentences.slice(0, n / 2).join("");
+      if (norm(half).length >= 40 && norm(half) === norm(sentences.slice(n / 2).join(""))) {
+        removed = true;
+        return half.trimEnd();
+      }
+    }
+    return b;
+  });
+  return { text: collapsed.join("\n\n"), removed };
 }
 
 function shorten(text: string, max: number) {

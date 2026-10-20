@@ -184,7 +184,7 @@ function whereFor(query: TicketQuery, includeView: boolean) {
     );
   }
   if (includeView) {
-    const view = query.view && query.view in VIEW_SQL ? query.view : null;
+    const view = query.view && (INBOX_VIEWS as string[]).includes(query.view) ? query.view : null;
     if (view) add(VIEW_SQL[view]);
     else if (["open", "pending", "closed"].includes(query.status ?? "")) add(`t.status = ?`, query.status!);
   }

@@ -26,17 +26,31 @@ interface Scenario {
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
 const live = args.includes("--live");
-const only = args.includes("--only") ? args[args.indexOf("--only") + 1]?.split(",") : null;
+const onlyArg = args.includes("--only") ? args[args.indexOf("--only") + 1] : undefined;
+if (args.includes("--only") && (!onlyArg || onlyArg.startsWith("--"))) {
+  console.error("--only needs scenario ids, e.g. --only S01,E07");
+  process.exit(2);
+}
+const only = onlyArg ? onlyArg.split(",").map((x) => x.trim()) : null;
 
 const load = (f: string) => JSON.parse(readFileSync(join(root, "testing", f), "utf8")) as Scenario[];
-const scenarios = [...load("scenarios.json"), ...load("reliability-scenarios.json")].filter((s) => !only || only.includes(s.id));
+const allScenarios = [...load("scenarios.json"), ...load("reliability-scenarios.json")];
+const unknown = (only ?? []).filter((id) => !allScenarios.some((s) => s.id === id));
+if (unknown.length) {
+  console.error(`Unknown scenario id(s): ${unknown.join(", ")}`);
+  process.exit(2);
+}
+const scenarios = allScenarios.filter((s) => !only || only.includes(s.id));
 
 // What the expectation text requires, in machine-checkable terms
 function rules(s: Scenario) {
   const e = s.expect;
   return {
     mustEscalate: /Require HIGH\/CRITICAL|Critical\/high sensitive|High priority and alert|ESCALATE IMMEDIATE/i.test(e),
-    mustNotDraft: /do NOT draft|No model generation|no-action/i.test(e) && !/must not be suppressed/i.test(e),
+    // Case-sensitive: "do NOT draft" means no draft; "do not draft a reply promising…" doesn't
+    mustNotDraft: /do NOT draft|No model generation|no-action/.test(e) && !/must not be suppressed/i.test(e),
+    // "No-action or escalate" also accepts an urgent escalation; "No model generation" doesn't
+    escalateOk: /or escalate/i.test(e),
     mustDraft: /^DRAFT|must not be suppressed/i.test(e),
     calm: /low\/normal|no staff task or owner alert/i.test(e),
   };
@@ -76,7 +90,8 @@ for (const s of scenarios) {
   const urgent = c.priority === "high" || c.priority === "critical";
   const problems: string[] = [];
   if (r.mustEscalate && !(urgent && c.notifyOwner)) problems.push(`expected high/critical with owner alert, got ${c.priority}`);
-  if (r.mustNotDraft && c.shouldDraft && !urgent) problems.push("expected no draft (nothing to answer), the gate would draft");
+  if (r.mustNotDraft && c.shouldDraft && !(urgent && r.escalateOk)) problems.push("expected no draft (nothing to answer), the gate would draft");
+  if (r.mustNotDraft && !r.escalateOk && c.notifyOwner) problems.push(`expected no owner alert, got ${c.priority}`);
   if (r.mustDraft && !c.shouldDraft) problems.push("expected a draft, the gate skipped it");
   if (r.calm && c.notifyOwner) problems.push(`expected no owner alert, got ${c.priority} (${c.reason})`);
   for (const p of problems) misses.push(`${s.id}: ${p}`);

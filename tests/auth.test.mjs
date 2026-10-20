@@ -138,6 +138,10 @@ test("a staff session passes; cross-site writes are blocked", async () => {
   assert.equal(cross.status, 403);
   const noOrigin = run("/api/helpdesk/sim/tickets/SIM-1", { method: "PATCH", headers: { cookie: s.cookie } });
   assert.equal(noOrigin.status, 403);
+  // Behind Caddy the site is https: an http:// page on the same host isn't the same origin
+  const https = { cookie: s.cookie, "x-forwarded-proto": "https" };
+  assert.equal(run("/api/helpdesk/sim/tickets/SIM-1/messages", { method: "POST", headers: { ...https, origin: "https://helpdesk.test" } }).headers.get("x-middleware-next"), "1");
+  assert.equal(run("/api/helpdesk/sim/tickets/SIM-1/messages", { method: "POST", headers: { ...https, origin: "http://helpdesk.test" } }).status, 403);
 });
 
 test("the simulator key opens /api/helpdesk only", () => {

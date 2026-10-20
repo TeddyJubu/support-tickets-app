@@ -61,7 +61,9 @@ export function parseChanges(input: unknown): { changes: TicketChanges } | { err
     }
   }
   if ("tags" in raw) {
-    if (!Array.isArray(raw.tags) || raw.tags.length > 20) return { error: "tags must be a list of up to 20" };
+    if (!Array.isArray(raw.tags) || raw.tags.length > 20 || raw.tags.some((t) => typeof t !== "string")) {
+      return { error: "tags must be a list of up to 20 names" };
+    }
     changes.tags = [...new Set(raw.tags.map(cleanTag).filter(Boolean))];
   }
   for (const key of ["addTag", "removeTag"] as const) {

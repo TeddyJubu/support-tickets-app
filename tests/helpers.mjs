@@ -8,7 +8,6 @@ import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
-import { pathToFileURL } from "node:url";
 
 export const root = new URL("..", import.meta.url);
 
@@ -37,7 +36,7 @@ export function stubModule(specifier, source) {
 }
 
 /** import("@/app/api/...") with a project-relative path */
-export const importApp = (path) => import(pathToFileURL(new URL(path, root).pathname).href);
+export const importApp = (path) => import(new URL(path, root).href);
 
 /** Call a Next.js route handler */
 export async function call(handler, { method = "GET", url = "http://test/", body, headers = {}, params = {} } = {}) {

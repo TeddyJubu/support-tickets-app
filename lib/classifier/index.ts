@@ -87,7 +87,8 @@ export function classify(input: {
     return { priority: "normal", sensitive: false, notifyOwner: false, shouldDraft: false, reason: "Looks like spam (no store question)", matched: [] };
   }
   const subject = rawSubject.replace(BROKEN_PORTAL, "return portal unavailable");
-  const message = rawMessage.replace(BROKEN_PORTAL, "return portal unavailable");
+  // Only the customer's new words: quoted history must not re-escalate an old complaint
+  const message = latest.replace(BROKEN_PORTAL, "return portal unavailable");
   const mainViews = [`${subject} ${message}`.toLowerCase()];
   const folded = foldQuotes(mainViews[0]);
   if (folded !== mainViews[0]) mainViews.push(folded);

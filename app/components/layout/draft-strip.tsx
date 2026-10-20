@@ -49,17 +49,27 @@ function RewriteBox({ draft, onDone }: { draft: DraftInfo; onDone: () => void })
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
+  // The latest reply text and ticket, for checking when the answer comes back
+  const latest = useRef({ composeText, selectedTicketId });
+  useEffect(() => {
+    latest.current = { composeText, selectedTicketId };
+  });
   const run = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!instruction.trim()) return setError("Say how to change the reply");
     const mine = ++request.current;
     const ticket = selectedTicketId;
+    const submitted = composeText;
     setBusy(true);
     setError(null);
     try {
-      const out = await apiJson<{ text: string }>(`/api/helpdesk/drafts/${draft.id}/rewrite`, jsonInit("POST", { instruction, text: composeText || draft.body }));
-      // Drop answers that arrive after the agent moved on
-      if (mine !== request.current || ticket !== selectedTicketId) return;
+      const out = await apiJson<{ text: string }>(`/api/helpdesk/drafts/${draft.id}/rewrite`, jsonInit("POST", { instruction, text: submitted || draft.body }));
+      // Drop answers that arrive after the agent cancelled, moved on, or edited the reply meanwhile
+      if (mine !== request.current || ticket !== latest.current.selectedTicketId) return;
+      if (latest.current.composeText !== submitted) {
+        setError("You edited the reply while it was being rewritten, so the rewrite wasn't applied");
+        return;
+      }
       setComposeText(out.text);
       notify("Rewritten into the reply box: check it before sending", "info");
       onDone();
@@ -87,7 +97,14 @@ function RewriteBox({ draft, onDone }: { draft: DraftInfo; onDone: () => void })
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
         Rewrite
       </button>
-      <button type="button" onClick={onDone} aria-label="Cancel" className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-accent">
+      <button
+        type="button"
+        onClick={() => {
+          ++request.current; // a rewrite still in flight is dropped
+          onDone();
+        }}
+        aria-label="Cancel"
+        className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-accent">
         <X className="size-4" />
       </button>
       {error && <p className="w-full text-xs text-destructive">{error}</p>}

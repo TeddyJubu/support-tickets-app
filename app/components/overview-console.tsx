@@ -64,7 +64,16 @@ function Stat({ label, value, tone }: { label: string; value: React.ReactNode; t
 export function OverviewConsole() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => apiJson<Data>("/api/overview").then(setData).catch((e) => setError(e.message)), []);
+  const load = useCallback(
+    () =>
+      apiJson<Data>("/api/overview")
+        .then((d) => {
+          setData(d);
+          setError(null);
+        })
+        .catch((e) => setError(e.message)),
+    [],
+  );
   useEffect(() => {
     load();
     const t = setInterval(() => !document.hidden && load(), 30_000);
@@ -75,6 +84,12 @@ export function OverviewConsole() {
 
   return (
     <div className="mx-auto grid max-w-7xl gap-4 p-4 md:grid-cols-2 md:p-6 xl:grid-cols-3">
+      {error && (
+        // Old numbers stay on screen, so say they may be out of date
+        <p role="status" className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning md:col-span-2 xl:col-span-3">
+          Couldn&apos;t refresh ({error}): showing the last numbers loaded. Retrying every 30 seconds.
+        </p>
+      )}
       <Card title="Needs attention" icon={Flag} className="xl:col-span-2">
         <Show part={d?.escalations}>
           {(rows) =>

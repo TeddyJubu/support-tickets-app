@@ -3,7 +3,7 @@
 // Lessons from delivered replies. The owner approves good ones; each night approved lessons
 // are masked and added to the knowledge base as examples. Text here is already masked.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, X, GraduationCap, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Lesson } from "@/lib/learning";
@@ -28,15 +28,18 @@ const FILTERS = [
 
 export function LearningTab({ owner }: { owner: boolean }) {
   const [status, setStatus] = useState<(typeof FILTERS)[number][0]>("pending");
-  const [data, setData] = useState<{ stats: Stats; lessons: Lesson[] } | null>(null);
+  const [loaded, setLoaded] = useState<{ status: string; stats: Stats; lessons: Lesson[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(
-    () =>
-      apiJson<{ stats: Stats; lessons: Lesson[] }>(`/api/learning?status=${status}`)
-        .then(setData)
-        .catch((e) => setError(e instanceof Error ? e.message : "Couldn't load lessons")),
-    [status],
-  );
+  const request = useRef(0);
+  const load = useCallback(() => {
+    // Only the latest request counts: a slow answer for another filter is dropped
+    const mine = ++request.current;
+    return apiJson<{ stats: Stats; lessons: Lesson[] }>(`/api/learning?status=${status}`)
+      .then((d) => mine === request.current && setLoaded({ status, ...d }))
+      .catch((e) => mine === request.current && setError(e instanceof Error ? e.message : "Couldn't load lessons"));
+  }, [status]);
+  // The list shows only lessons for the chosen filter (stats stay while the next list loads)
+  const data = loaded && { stats: loaded.stats, lessons: loaded.status === status ? loaded.lessons : null };
   useEffect(() => {
     load();
   }, [load]);
@@ -79,9 +82,9 @@ export function LearningTab({ owner }: { owner: boolean }) {
         ))}
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {data && !data.lessons.length && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Nothing here.</p>}
+      {data?.lessons && !data.lessons.length && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Nothing here.</p>}
       <div className="space-y-3">
-        {data?.lessons.map((l) => (
+        {data?.lessons?.map((l) => (
           <article key={l.id} className="rounded-xl border border-border bg-card p-4 text-sm">
             <header className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="font-mono">{l.ticketId}</span>

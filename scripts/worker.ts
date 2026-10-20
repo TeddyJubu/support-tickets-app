@@ -13,6 +13,7 @@ import { processJob, JOB_TIMEOUT_MS } from "@/lib/drafting/run";
 import { setState, type Heartbeat } from "@/lib/worker/state";
 import { runDueTasks } from "@/lib/worker/schedule";
 import { deliverAlerts } from "@/lib/alerts";
+import { writeOpsStatus } from "@/lib/ops/monitor";
 import { loadEnv } from "./env";
 
 loadEnv();
@@ -31,7 +32,9 @@ function acquireLock() {
     // A lock left by a dead process can be taken over
     const pid = Number(readFileSync(lockPath, "utf8").trim());
     try {
-      if (pid) process.kill(pid, 0);
+      // A blank or garbled lock has no owner: take it over
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error("invalid lock");
+      process.kill(pid, 0);
       return false;
     } catch {
       rmSync(lockPath, { force: true });
@@ -65,9 +68,19 @@ async function loop() {
   getDb(); // migrate before anything else
   log(`started (pid ${process.pid})`);
   let lastTasks = 0;
+  let lastMonitor = 0;
   while (!stopping) {
     heartbeat();
     recoverStaleJobs(getDb());
+    // The ops report is refreshed every minute even when drafts keep the worker busy
+    if (Date.now() - lastMonitor > 60_000) {
+      lastMonitor = Date.now();
+      try {
+        writeOpsStatus();
+      } catch (err) {
+        log(`ops monitor: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     // Owner alerts go out before the next draft, so an urgent ticket is never stuck behind one
     const alerts = await deliverAlerts().catch((err) => (log(`alerts: ${err}`), null));
     if (alerts && (alerts.sent || alerts.failed)) log(`alerts sent ${alerts.sent}, failed ${alerts.failed}`);
@@ -76,7 +89,13 @@ async function loop() {
       // Maintenance only while the queue is empty, so drafts never wait behind it
       if (Date.now() - lastTasks > 30_000) {
         lastTasks = Date.now();
-        await runDueTasks(log);
+        // A backup or re-index can take minutes: keep the heartbeat alive meanwhile
+        const pulse = setInterval(heartbeat, 15_000);
+        try {
+          await runDueTasks(log);
+        } finally {
+          clearInterval(pulse);
+        }
         heartbeat();
       }
       await sleep(IDLE_MS);

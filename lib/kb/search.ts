@@ -29,17 +29,23 @@ export interface KbSearchOutcome {
   mode: "hybrid" | "keyword" | "unavailable";
 }
 
-let cached: { db: DatabaseSync; ino: number; mtimeMs: number; vectors: Array<{ id: number; v: Float32Array }> | null } | null = null;
+interface OpenIndex {
+  db: DatabaseSync;
+  ino: number;
+  mtimeMs: number;
+  vectors: Array<{ id: number; v: Float32Array }> | null;
+}
+let cached: OpenIndex | null = null;
 
-// Re-opens after a rebuild swapped the file
+// Re-opens after a rebuild swapped the file. The old connection isn't closed here: a search
+// that started on it may still be awaiting an embedding; it's released once unreferenced.
 function openIndex() {
   const path = kbDbPath();
   if (!existsSync(path)) return null;
   const st = statSync(path);
-  if (cached && cached.ino === st.ino && cached.mtimeMs === st.mtimeMs) return cached.db;
-  cached?.db.close();
+  if (cached && cached.ino === st.ino && cached.mtimeMs === st.mtimeMs) return cached;
   cached = { db: new DatabaseSync(path, { readOnly: true }), ino: st.ino, mtimeMs: st.mtimeMs, vectors: null };
-  return cached.db;
+  return cached;
 }
 
 // Plain words only, OR-ed: user text can't inject FTS5 syntax
@@ -62,7 +68,8 @@ const fromBlob = (b: Uint8Array) => new Float32Array(b.buffer, b.byteOffset, b.b
 
 export async function searchKb(query: string, k = 5): Promise<KbSearchOutcome> {
   const notices = activeNotices();
-  const db = openIndex();
+  const index = openIndex();
+  const db = index?.db;
   const q = query.trim().slice(0, 1000);
   if (!db || !q) return { results: [], notices, mode: db ? "keyword" : "unavailable" };
 
@@ -83,11 +90,11 @@ export async function searchKb(query: string, k = 5): Promise<KbSearchOutcome> {
       if (qv) {
         const query32 = new Float32Array(qv);
         // Loaded once per index file (a rebuild swaps the file and reopens the cache)
-        cached!.vectors ??= (db.prepare(`SELECT id, embedding FROM chunks`).all() as Array<{ id: number; embedding: Uint8Array }>).map((r) => ({
+        index!.vectors ??= (db.prepare(`SELECT id, embedding FROM chunks`).all() as Array<{ id: number; embedding: Uint8Array }>).map((r) => ({
           id: Number(r.id),
           v: new Float32Array(fromBlob(r.embedding)),
         }));
-        const ranked = cached!.vectors
+        const ranked = index!.vectors
           .map((r) => ({ id: r.id, s: cosine(query32, r.v) }))
           .sort((a, b) => b.s - a.s)
           .slice(0, POOL);

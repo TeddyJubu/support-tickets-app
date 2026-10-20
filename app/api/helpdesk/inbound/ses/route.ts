@@ -76,7 +76,10 @@ export async function POST(request: Request) {
     ),
   );
   const fullBody = stripQuoted(text) || text.trim();
-  const body = fullBody.slice(0, MAX_BODY) || "(empty message)";
+  const dropped = mail.attachments.length - attachments.length;
+  const body =
+    (fullBody.slice(0, MAX_BODY) || "(empty message)") +
+    (dropped > 0 ? `\n\n[${dropped} more attachment${dropped === 1 ? "" : "s"} not imported: only the first ${MAX_ATTACHMENTS} are kept]` : "");
 
   const result = ingestEmail({
     customer: { sourceKey: `email:${createHash("sha256").update(from).digest("hex")}`, firstName, lastName: rest.join(" "), email: from },

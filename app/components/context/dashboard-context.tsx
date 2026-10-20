@@ -525,7 +525,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       try {
         const detail = await apiJson<TicketDetail>("/api/helpdesk/tickets", jsonInit("POST", input));
         notify(`${detail.ticket.id} created`);
-        await fetchTickets(ticketQuery, undefined, true);
+        // Back to the first page, where the new ticket is
+        await fetchTickets(ticketQuery, 0, true);
         await selectTicket(detail.ticket.id);
         return detail.ticket.id;
       } catch (err) {
@@ -547,7 +548,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
           jsonInit("POST", { author: "note", body: content }),
         );
         if (selectedRef.current === id) applyDetail(detail, true);
-        setState((prev) => (prev.composeText === content ? { ...prev, composeText: "" } : prev));
         notify("Note added");
         return true;
       } catch (err) {

@@ -356,6 +356,7 @@ test("a sensitive KB article only marks the draft sensitive if the draft relied 
 
 test("more than 4 parallel tool calls: every call gets a reply, only 4 run", async () => {
   let sawTools = null;
+  let sawContents = [];
   clearQueue();
   process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
   process.env.CLOUDFLARE_API_TOKEN = "token";
@@ -369,6 +370,7 @@ test("more than 4 parallel tool calls: every call gets a reply, only 4 run", asy
       return Response.json({ choices: [{ message: { role: "assistant", content: "", tool_calls: calls } }] });
     }
     sawTools = toolMsgs.map((m) => m.tool_call_id);
+    sawContents = toolMsgs.map((m) => m.content);
     return Response.json({ choices: [{ message: { role: "assistant", content: wrap(token, "Hi,\n\nShips in 2 days.") } }] });
   });
   const id = ticket("Many lookups: how long is shipping?");
@@ -376,6 +378,9 @@ test("more than 4 parallel tool calls: every call gets a reply, only 4 run", asy
   const outcome = await run.processJob(job);
   assert.equal(outcome.state, "done");
   assert.deepEqual(sawTools, ["c0", "c1", "c2", "c3", "c4", "c5"]);
+  // The first 4 ran; the 5th and 6th were told to ask again
+  for (const c of sawContents.slice(0, 4)) assert.doesNotMatch(c, /Too many lookups/);
+  for (const c of sawContents.slice(4)) assert.match(c, /Too many lookups/);
   void id;
   ai.setAiFetch(null);
 });

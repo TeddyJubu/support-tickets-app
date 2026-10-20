@@ -70,7 +70,7 @@ test("the simulator/CLI key reaches only /api/helpdesk, and not the staff-only a
 });
 
 test("inbound email: wrong token, unknown topic and junk are refused", async () => {
-  process.env.INBOUND_EMAIL_TOKEN = "inbound-token-0123456789abcdef";
+  process.env.INBOUND_EMAIL_TOKEN = "test-inbound-token-0123456789";
   process.env.INBOUND_SNS_TOPIC_ARN = "arn:aws:sns:us-west-2:1:helpdesk";
   const ses = await importApp("app/api/helpdesk/inbound/ses/route.ts");
   const post = (q, body) => call(ses.POST, { method: "POST", url: `http://t/api/helpdesk/inbound/ses?token=${q}`, body });
@@ -83,7 +83,7 @@ test("inbound email: wrong token, unknown topic and junk are refused", async () 
 });
 
 test("an oversized inbound email is cut and flagged, never rejected or crashing", async () => {
-  process.env.INBOUND_EMAIL_TOKEN = "inbound-token-0123456789abcdef";
+  process.env.INBOUND_EMAIL_TOKEN = "test-inbound-token-0123456789";
   process.env.INBOUND_SNS_TOPIC_ARN = "arn:aws:sns:us-west-2:1:helpdesk";
   const ses = await importApp("app/api/helpdesk/inbound/ses/route.ts");
   const mime = [

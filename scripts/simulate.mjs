@@ -334,7 +334,15 @@ async function runNewTickets(count, runId) {
 async function main() {
   if (args.reset) {
     const sim = new DatabaseSync(join(root, "data/sim.db"));
-    sim.exec("PRAGMA busy_timeout = 5000; DELETE FROM sim_messages; DELETE FROM sim_tickets; DELETE FROM sim_customers; DELETE FROM sqlite_sequence WHERE name = 'sim_tickets';");
+    // Rows that reference tickets, messages or customers go first (foreign keys are enforced)
+    const dependents = [
+      "attachments", "drafts", "jobs", "ticket_tags", "ticket_reads", "sim_email_ids", "sim_email_outbox",
+      "store_snapshots", "sim_returns", "lessons", "send_reviews", "notifications",
+    ];
+    const exists = (t) => sim.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    sim.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");
+    for (const t of dependents) if (exists(t)) sim.exec(`DELETE FROM ${t}`);
+    sim.exec("DELETE FROM sim_messages; DELETE FROM sim_tickets; DELETE FROM sim_customers; DELETE FROM sqlite_sequence WHERE name = 'sim_tickets'; COMMIT");
     sim.close();
     console.log("Deleted all simulated tickets and customers.");
     return;

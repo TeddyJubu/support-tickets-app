@@ -62,10 +62,32 @@ const RECOVERY: Record<string, string> = {
 export function ReviewDialog() {
   const { review, cancelReview, confirmReview } = useDashboard();
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const open = !!review;
+  // On open: focus Confirm; on close: focus returns to where it was
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    (confirmRef.current ?? dialogRef.current?.querySelector<HTMLElement>("button:not([disabled])"))?.focus();
+    return () => previous?.focus?.();
+  }, [open]);
+  // Escape cancels (unless sending); Tab stays inside the dialog
   useEffect(() => {
     if (!review) return;
-    confirmRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !review.busy && cancelReview();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return void (!review.busy && cancelReview());
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, textarea, select, [tabindex]:not([tabindex="-1"])',
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialogRef.current.contains(active) || (e.shiftKey ? active === first : active === last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [review, cancelReview]);
@@ -76,7 +98,7 @@ export function ReviewDialog() {
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center bg-background/60 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && !busy && cancelReview()}>
-      <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="flex max-h-[90dvh] w-full max-w-xl flex-col rounded-2xl border border-border bg-card shadow-pop">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="review-title" className="flex max-h-[90dvh] w-full max-w-xl flex-col rounded-2xl border border-border bg-card shadow-pop">
         <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
           <Mail className="size-4 text-primary" />
           <h2 id="review-title" className="text-base font-semibold">

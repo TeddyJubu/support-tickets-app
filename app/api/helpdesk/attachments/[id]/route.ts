@@ -19,7 +19,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
       "x-content-type-options": "nosniff",
       "content-security-policy": "default-src 'none'; sandbox",
-      "cache-control": "private, max-age=3600",
+      "cache-control": "private, no-store",
     },
   });
 }

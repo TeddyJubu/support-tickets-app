@@ -24,7 +24,7 @@ export async function rewriteDraft(input: { text: string; instruction: string; s
         },
         {
           role: "user",
-          content: `Instruction from staff: ${neutralize(input.instruction).slice(0, 1000)}\n\nDraft:\n${neutralize(input.text).slice(0, 8000)}`,
+          content: `Instruction from staff: ${neutralize(input.instruction).slice(0, 1000)}\n\nDraft:\n${neutralize(input.text).slice(0, 10_000)}`,
         },
       ],
       { maxTokens: 4000, timeoutMs: TIMEOUT_MS, temperature: 0.4 },

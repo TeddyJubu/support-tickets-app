@@ -12,7 +12,8 @@ export function GET() {
 export async function POST(request: Request) {
   const user = requireOwner(request);
   if (user instanceof Response) return user;
-  const checked = validateNotice((await request.json().catch(() => ({}))) as Record<string, unknown>);
+  const body = (await request.json().catch(() => null)) as unknown;
+  const checked = validateNotice(body && typeof body === "object" ? (body as Record<string, unknown>) : {});
   if ("error" in checked) return Response.json({ error: checked.error }, { status: 400 });
   return Response.json(createNotice(checked, user.username), { status: 201 });
 }

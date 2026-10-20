@@ -75,14 +75,15 @@ function toOrder(o: Row & { line_items: Row[]; fulfillments: Row[]; refunds: Row
       shipmentStatus: s(f.shipment_status),
     })),
     refunds,
-    refunded: refunds.length ? refunds.reduce((sum, r) => sum + (r.amount ?? 0), 0) : 0,
+    // One refund with an unknown amount makes the total unknown ("unavailable"), never $0
+    refunded: refunds.some((r) => r.amount === null) ? null : refunds.reduce((sum, r) => sum + (r.amount ?? 0), 0),
   };
 }
 
 async function fetchSnapshot(storeCustomerId: string, orderName: string | null): Promise<StoreSnapshot | null> {
   const config = storeConfig(process.env);
   if (!config) throw new Error("not configured");
-  const data = await getSimCustomerWithOrders(config, storeCustomerId);
+  const data = await getSimCustomerWithOrders(config, storeCustomerId, 10, orderName);
   if (!data) return null;
   const c = data.customer as Row;
   const orders = (data.orders as Array<Row & { line_items: Row[]; fulfillments: Row[]; refunds: Row[] }>).map(toOrder);

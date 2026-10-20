@@ -46,7 +46,7 @@ async function post(path: string, body: unknown, timeoutMs: number) {
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (res.status === 401 || res.status === 403) throw new AiError(`Workers AI refused the credentials (HTTP ${res.status})`, "auth");
   if (!res.ok) {
-    throw new AiError(`Workers AI HTTP ${res.status}`, res.status === 429 || res.status >= 500 ? "transient" : "invalid");
+    throw new AiError(`Workers AI HTTP ${res.status}`, res.status === 408 || res.status === 429 || res.status >= 500 ? "transient" : "invalid");
   }
   return json ?? {};
 }

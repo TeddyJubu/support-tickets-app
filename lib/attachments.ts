@@ -11,8 +11,11 @@ import type { AttachmentInput } from "./sim-db";
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_ATTACHMENTS = 20;
-// Executables and scripts are never stored
-const BLOCKED = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|js|jse|jar|sh|app|dmg|iso|html?|svg|xhtml)$/i;
+// Only ordinary customer files are stored (photos, PDFs, documents, short videos); anything
+// else, including scripts and executables, is kept as metadata only
+const ALLOWED_TYPES =
+  /^(image\/(png|jpe?g|gif|webp|heic|heif)|application\/pdf|text\/(plain|csv)|video\/(mp4|quicktime)|application\/(msword|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet)|vnd\.ms-excel))$/i;
+const ALLOWED_EXT = /\.(png|jpe?g|gif|webp|heic|heif|pdf|txt|csv|mp4|mov|docx?|xlsx?)$/i;
 export const INLINE_TYPES = /^image\/(png|jpe?g|gif|webp)$/i;
 
 const dir = () => join(dataDir(), "attachments");
@@ -22,7 +25,7 @@ export function saveAttachment(content: Uint8Array, filename: string, contentTyp
   const type = (contentType || "application/octet-stream").toLowerCase().slice(0, 100);
   const sha256 = createHash("sha256").update(content).digest("hex");
   const meta = { filename: name, contentType: type, size: content.byteLength, sha256 };
-  if (content.byteLength > MAX_ATTACHMENT_BYTES || BLOCKED.test(name) || /svg|html|javascript/.test(type)) {
+  if (content.byteLength > MAX_ATTACHMENT_BYTES || !ALLOWED_TYPES.test(type) || !ALLOWED_EXT.test(name)) {
     return { ...meta, stored: false };
   }
   mkdirSync(dir(), { recursive: true });

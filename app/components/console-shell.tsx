@@ -33,8 +33,9 @@ export function ConsoleShell({ title, actions, children }: { title: string; acti
           <AppNav className="ml-2" />
           <div className="ml-auto flex items-center gap-3">
             {actions}
-            <NotificationBell align="right" />
             <UserBadge />
+            {/* Last, so its panel lines up with the header's right edge on narrow screens */}
+            <NotificationBell align="right" />
           </div>
         </header>
         <main className="flex-1">{children}</main>

@@ -2,7 +2,7 @@
 // KB articles in data/kb/products/, one file per brand with a "## " section per product.
 // The new folder is built beside the old one and swapped in only if it looks right.
 
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { catalogProducts } from "../helpdesk-db";
 import { kbDir } from "./files";
@@ -49,15 +49,20 @@ export function syncProducts(): ProductSyncResult {
   const products = catalogProducts();
   if (!products.length) return { ok: false, products: 0, files: 0, error: "The catalog export has no active products" };
   const dir = join(kbDir(), "products");
-  const previous = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).length : 0;
+  // Products currently published ("## " sections), to refuse an export that lost most of them
+  const previous = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.endsWith(".md"))
+        .reduce((n, f) => n + (readFileSync(join(dir, f), "utf8").match(/^## /gm)?.length ?? 0), 0)
+    : 0;
+  if (previous > 0 && products.length < previous / 2) {
+    return { ok: false, products: products.length, files: 0, error: `Only ${products.length} products (was ${previous}): not replacing` };
+  }
 
   const byVendor = new Map<string, Record<string, unknown>[]>();
   for (const p of products) {
     const vendor = clean(p.vendor) || "Other";
     byVendor.set(vendor, [...(byVendor.get(vendor) ?? []), p]);
-  }
-  if (previous > 0 && byVendor.size < previous / 2) {
-    return { ok: false, products: products.length, files: byVendor.size, error: `Only ${byVendor.size} brands (was ${previous}): not replacing` };
   }
 
   const next = `${dir}.new-${process.pid}`;

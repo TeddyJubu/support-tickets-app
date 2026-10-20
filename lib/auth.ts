@@ -155,20 +155,27 @@ export function login(username: string, password: string, ip: string): LoginResu
   recordAttempt(ip, username, valid);
   if (!valid || !r) return { ok: false, reason: "invalid" };
   const user = toUser(r);
-  const { token, expiresAt } = createSession(user.id);
+  const session = createSession(user.id, String(r.password_hash));
+  // The password changed (or the user was disabled) between the check and now
+  if (!session) return { ok: false, reason: "invalid" };
+  const { token, expiresAt } = session;
   return { ok: true, user, token, expiresAt };
 }
 
 // ---------- sessions ----------
 
 
-export function createSession(userId: number) {
+/** Null when the user is disabled or, with expectedHash, the password changed (one atomic statement) */
+export function createSession(userId: number, expectedHash?: string): { token: string; expiresAt: Date } | null {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + MAX_DAYS * 86400e3);
-  getDb()
-    .prepare(`INSERT INTO staff_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`)
-    .run(sha256(token), userId, toSqlTime(expiresAt));
-  return { token, expiresAt };
+  const res = getDb()
+    .prepare(
+      `INSERT INTO staff_sessions (token_hash, user_id, expires_at)
+       SELECT ?, id, ? FROM staff_users WHERE id = ? AND disabled_at IS NULL AND (? IS NULL OR password_hash = ?)`,
+    )
+    .run(sha256(token), toSqlTime(expiresAt), userId, expectedHash ?? null, expectedHash ?? null);
+  return res.changes ? { token, expiresAt } : null;
 }
 
 /** The signed-in staff user for a session token, or null (expired, idle too long, disabled) */

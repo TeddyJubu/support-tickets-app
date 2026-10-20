@@ -14,7 +14,11 @@ const PATTERNS = [
   ["GitHub token", /\bgh[pousr]_[A-Za-z0-9]{36,}\b/],
   ["Slack token", /\bxox[abpr]-[A-Za-z0-9-]{10,}/],
   ["Anthropic/OpenAI key", /\bsk-(ant-)?[A-Za-z0-9_-]{32,}/],
-  ["assigned secret", /\b(SECRET|TOKEN|PASSWORD|API_KEY)[A-Z_]*\s*=\s*['"]?[A-Za-z0-9/+_-]{24,}/],
+  // Any name containing a secret word (CLOUDFLARE_API_TOKEN, SES_ACCESS_KEY_ID…), "=" or ":"
+  [
+    "assigned secret",
+    /\b[A-Z0-9_]*(SECRET|TOKEN|PASSWORD|API_KEY|ACCESS_KEY)[A-Z0-9_]*["']?\s*[=:]\s*['"]?(?!(?:test|dev|your|example|placeholder|changeme)[-_])[A-Za-z0-9/+_-]{24,}/,
+  ],
 ];
 const SKIP = /(^|\/)(package-lock\.json|.*\.(png|jpg|ico|svg|woff2?|pptx))$/;
 

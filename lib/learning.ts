@@ -159,15 +159,24 @@ export function promoteApprovedLessons() {
   if (!approved.length) return 0;
   const dir = join(kbDir(), "learned");
   mkdirSync(dir, { recursive: true });
+  let promoted = 0;
   for (const l of approved) {
     const name = `lesson-${Number(l.id)}-${slug(String(l.intent ?? "reply"))}.md`;
     const path = join(dir, name);
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, exemplar(l));
-    renameSync(tmp, path);
-    transaction(d, () => {
-      d.prepare(`UPDATE lessons SET status = 'promoted', promoted_at = datetime('now'), kb_path = ? WHERE id = ?`).run(`learned/${name}`, Number(l.id));
-    });
+    // Claim it while still approved: a lesson rejected meanwhile is skipped, not published
+    const claimed = transaction(d, () =>
+      d.prepare(`UPDATE lessons SET status = 'promoted', promoted_at = datetime('now'), kb_path = ? WHERE id = ? AND status = 'approved'`).run(`learned/${name}`, Number(l.id)).changes,
+    );
+    if (!claimed) continue;
+    try {
+      const tmp = `${path}.${process.pid}.tmp`;
+      writeFileSync(tmp, exemplar(l));
+      renameSync(tmp, path);
+      promoted++;
+    } catch (err) {
+      d.prepare(`UPDATE lessons SET status = 'approved', promoted_at = NULL, kb_path = NULL WHERE id = ?`).run(Number(l.id));
+      throw err;
+    }
   }
-  return approved.length;
+  return promoted;
 }

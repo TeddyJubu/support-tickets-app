@@ -8,7 +8,6 @@ import { rebuildIndex } from "../kb/index";
 import { getState, setState } from "./state";
 import { promoteApprovedLessons } from "../learning";
 import { runBackup } from "../ops/backup";
-import { writeOpsStatus } from "../ops/monitor";
 
 export interface Task {
   name: string;
@@ -19,7 +18,6 @@ export interface Task {
 }
 
 const tasks: Task[] = [
-  { name: "ops-monitor", everyMinutes: 1, run: () => ({ ok: writeOpsStatus().ok }) },
   { name: "backup", everyMinutes: 360, run: () => runBackup() },
   { name: "prune-sessions", everyMinutes: 60, run: () => pruneSessions() },
   { name: "prune-notices", dailyAtUtc: "04:00", run: () => ({ removed: pruneNotices() }) },
@@ -28,7 +26,10 @@ const tasks: Task[] = [
     dailyAtUtc: "03:00",
     run: async () => {
       const sync = syncProducts();
-      return sync.ok ? { sync, index: await rebuildIndex("product-sync") } : { sync };
+      if (!sync.ok) throw new Error(`Product sync refused: ${sync.error}`);
+      const index = await rebuildIndex("product-sync");
+      if (index.state === "failed") throw new Error(`Re-index after product sync failed: ${index.error}`);
+      return { sync, index };
     },
   },
   {

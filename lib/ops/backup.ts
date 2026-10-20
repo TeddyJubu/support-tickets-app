@@ -104,6 +104,15 @@ export async function runBackup() {
  * Decrypts a backup into a throwaway folder and checks it: SQLite integrity, checksums,
  * schema version and row counts. Never touches live data.
  */
+function readSchema(path: string) {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return schemaVersion(db);
+  } finally {
+    db.close();
+  }
+}
+
 export function restoreCheck(file: string, privateKey: string) {
   const path = existsSync(file) ? file : join(backupDir(), file);
   if (!existsSync(path)) throw new Error(`No such backup: ${file}`);
@@ -127,7 +136,12 @@ export function restoreCheck(file: string, privateKey: string) {
       report[name] = { integrity, checksum: sha256(join(out, name)) === sum ? "ok" : "MISMATCH", counts };
     }
     report.kbArticles = existsSync(join(out, "kb")) ? readdirSync(join(out, "kb"), { recursive: true }).filter((f) => String(f).endsWith(".md")).length : 0;
-    const ok = Object.values(report).every((v) => typeof v !== "object" || v === null || ((v as { integrity?: string }).integrity === "ok" && (v as { checksum?: string }).checksum === "ok"));
+    const sim = report["sim.db"] as { counts?: Record<string, number> } | undefined;
+    const restoredSchema = sim?.counts ? readSchema(join(out, "sim.db")) : null;
+    report.schemaCheck = restoredSchema === manifest.schema ? "ok" : `MISMATCH (restored ${restoredSchema}, manifest ${manifest.schema})`;
+    report.ticketCheck =
+      sim?.counts?.sim_tickets === (manifest as { tickets?: number }).tickets ? "ok" : `MISMATCH (restored ${sim?.counts?.sim_tickets}, manifest ${(manifest as { tickets?: number }).tickets})`;
+    const ok = report.schemaCheck === "ok" && report.ticketCheck === "ok" && Object.values(report).every((v) => typeof v !== "object" || v === null || ((v as { integrity?: string }).integrity === "ok" && (v as { checksum?: string }).checksum === "ok"));
     return { ok, ...report };
   } finally {
     rmSync(work, { recursive: true, force: true });

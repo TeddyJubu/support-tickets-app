@@ -178,7 +178,12 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
     severity,
     sensitive,
     verdict,
-    flags: [...cleaned.notes, ...(ctx.calls.some((c) => !c.ok) ? ["a lookup failed while drafting"] : [])],
+    flags: [
+      ...cleaned.notes,
+      ...(ctx.calls.some((c) => !c.ok) ? ["a lookup failed while drafting"] : []),
+      // The prompt requires a KB search for policy answers; tell staff when none happened
+      ...(!ctx.calls.some((c) => c.name === "search_kb" && c.ok) && !cleaned.suppressed ? ["written without a knowledge-base lookup: check any policy facts"] : []),
+    ],
     classification: pre,
   });
 }

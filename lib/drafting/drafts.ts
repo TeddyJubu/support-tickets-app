@@ -30,6 +30,12 @@ export function setDraftState(id: number, next: "used" | "dismissed" | "ready", 
     if (!(ALLOWED[String(r.state)] ?? []).includes(next)) {
       return { error: r.state === "superseded" ? "A newer customer message replaced this draft" : `Draft is ${r.state}`, status: 409 } as const;
     }
+    if (next === "ready") {
+      const latest = (d.prepare(`SELECT max(id) AS id FROM sim_messages WHERE ticket_id = ? AND author = 'customer'`).get(String(r.ticket_id)) as Row).id;
+      if (Number(latest ?? 0) !== Number(r.message_id ?? -1)) {
+        return { error: "The customer wrote again since this draft: ask for a new draft instead", status: 409 } as const;
+      }
+    }
     d.prepare(`UPDATE drafts SET state = ?, acted_by = ?, updated_at = datetime('now') WHERE id = ?`).run(next, actor, id);
     audit(actor, `draft_${next}`, String(r.ticket_id), { draftId: id });
     return { draft: toDraft(d.prepare(`SELECT * FROM drafts WHERE id = ?`).get(id) as Row) } as const;

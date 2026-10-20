@@ -405,6 +405,8 @@ function ArticleEditor({ path, owner, onSaved }: { path: string; owner: boolean;
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            readOnly={saving} // edits typed mid-save would be lost when the saved text comes back
+            aria-busy={saving}
             aria-label="Article Markdown"
             spellCheck
             className="h-full min-h-[50vh] w-full resize-none rounded-lg border border-input bg-background p-3 font-mono text-[13px] leading-relaxed outline-none focus:border-ring"

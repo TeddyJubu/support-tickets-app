@@ -101,18 +101,24 @@ const commands = {
     const site = await fetch(`${SITE}/`).then((r) => r.status).catch(() => 0);
     const ready = await fetch(`${BASE}/api/ready`).then((r) => r.json()).catch(() => null);
     const [sim, hist, store] = await Promise.all([
-      api("/api/helpdesk/tickets?source=sim&limit=100"),
+      api("/api/helpdesk/tickets?source=sim&limit=1"),
       api("/api/helpdesk/tickets?limit=1"),
       fetch(`${BASE}/api/helpdesk/orders?name=%23S0`).then((r) => r.status),
     ]);
-    const byStatus = sim.tickets.reduce((m, t) => ((m[t.status] = (m[t.status] ?? 0) + 1), m), {});
+    // The inbox holds simulated, real-email and staff tickets: count each channel separately
+    const [simOnly, emailOnly] = await Promise.all([
+      api("/api/helpdesk/tickets?source=sim&channel=simulator&limit=1"),
+      api("/api/helpdesk/tickets?source=sim&channel=email&limit=1"),
+    ]);
+    const c = sim.counts ?? {};
+    const byStatus = { open: c.open ?? 0, pending: c.pending ?? 0, closed: c.closed ?? 0 };
     const data = {
       service,
       ready: ready ? ready.ready : null,
       checks: ready?.checks ?? null,
       site: { url: SITE, httpStatus: site },
       store: store === 503 ? "not configured" : "connected",
-      simulatedTickets: { total: sim.total, ...byStatus },
+      inboxTickets: { total: sim.total, simulated: simOnly.total, email: emailOnly.total, ...byStatus },
       historicalTickets: hist.total,
       model: env.CF_MODEL || "@cf/zai-org/glm-5.3-flash",
     };
@@ -122,7 +128,7 @@ const commands = {
         `ready        ${ready ? (ready.ready ? "yes" : "NO") : "unknown"}${ready ? `  (${Object.entries(ready.checks).map(([k, c]) => `${k} ${c.ok ? "ok" : `FAIL${c.detail ? `: ${c.detail}` : ""}`}`).join(", ")})` : ""}`,
         `site         ${SITE} (HTTP ${site})`,
         `store        ${data.store}`,
-        `simulated    ${sim.total} tickets (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ") || "none"})`,
+        `inbox        ${sim.total} tickets: ${simOnly.total} simulated, ${emailOnly.total} email (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ")})`,
         `history      ${hist.total} tickets`,
         `model        ${data.model}`,
       ].join("\n"),

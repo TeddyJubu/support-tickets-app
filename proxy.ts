@@ -17,8 +17,10 @@ const isPublic = (path: string) => PUBLIC.some((p) => path === p || path.startsW
 function sameOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!origin) return false;
+  // Scheme counts too: behind Caddy the site is https (X-Forwarded-Proto), so http://host isn't us
+  const proto = request.headers.get("x-forwarded-proto") === "https" ? "https:" : request.nextUrl.protocol;
   try {
-    return new URL(origin).host === request.headers.get("host");
+    return new URL(origin).origin === `${proto}//${request.headers.get("host")}`;
   } catch {
     return false;
   }

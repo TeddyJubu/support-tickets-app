@@ -152,6 +152,7 @@ export async function confirmSend(input: {
   const t = target(input.ticketId);
   if (!t) return { status: 404, code: "not_found", error: "Ticket not found" };
   if ("error" in t) return { status: 409, code: "no_recipient", error: t.error! };
+  if (t.detail.ticket.trashed || t.detail.ticket.spam) return { status: 409, code: "trashed", error: "The ticket was moved to trash or spam: restore it first" };
   if (t.recipient !== review.recipient) return { status: 409, code: "changed_recipient", error: "The recipient changed after you reviewed it. Review it again." };
   if ((t.latest?.id ?? null) !== (review.source_message_id == null ? null : Number(review.source_message_id))) {
     return { status: 409, code: "newer_message", error: "The customer wrote again after you reviewed this. Read their new message first." };

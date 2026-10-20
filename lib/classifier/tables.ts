@@ -576,7 +576,7 @@ export const HIGH_MAIN: Rule[] = [
     "view": "unfiltered"
   },
   {
-    "pattern": "\\bexpress\\b",
+    "pattern": "\\b(?:by|via|use|using|upgrade\\s+(?:me\\s+)?to|switch\\s+(?:me\\s+)?to|need|want|send\\s+(?:it|this|them)|ship\\s+(?:it|this|them))\\s+(?:the\\s+)?express\\b",
     "exemplar": "Can you ship this by express delivery?",
     "tier": "high",
     "view": "unfiltered"

@@ -100,8 +100,14 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: ToolCo
   if (name === "get_order") {
     const orderName = String(args.order_name || ctx.orderName || "").trim();
     if (!orderName) return JSON.stringify({ error: "This ticket has no order on file. Ask the customer for their order number if it matters." });
-    // Only orders the simulator attached to tickets: the store holds real customer data
-    if (!/^#S\d+$/.test(orderName) || !isSimOrder(orderName)) return JSON.stringify({ error: `Order ${clip(orderName, 30)} isn't available to look up` });
+    // Only this ticket's order or another order on the same customer's tickets: never another
+    // customer's, and never a real order (the store holds real customer data)
+    const ownOrder =
+      orderName === ctx.orderName ||
+      (!!ctx.customerId && !!getDb().prepare(`SELECT 1 FROM sim_tickets WHERE customer_id = ? AND order_name = ?`).get(ctx.customerId, orderName));
+    if (!/^#S\d+$/.test(orderName) || !ownOrder || !isSimOrder(orderName)) {
+      return JSON.stringify({ error: `Order ${clip(orderName, 30)} isn't available to look up for this customer` });
+    }
     const config = storeConfig(process.env);
     if (!config) return JSON.stringify({ error: "The store isn't connected" });
     const order = await getOrderByName(config, orderName);

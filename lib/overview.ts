@@ -18,7 +18,8 @@ function part<T>(fn: () => T): { ok: true; data: T } | { ok: false; error: strin
   }
 }
 
-const ACTIVE = `trashed_at IS NULL AND spam_at IS NULL AND status != 'closed'`;
+// Same rule as the inbox: snoozed tickets aren't active until they wake
+const ACTIVE = `trashed_at IS NULL AND spam_at IS NULL AND status != 'closed' AND (snoozed_until IS NULL OR snoozed_until <= datetime('now'))`;
 
 export function overview() {
   const d = getDb();
@@ -28,7 +29,7 @@ export function overview() {
         .prepare(
           `SELECT t.id, t.subject, t.priority, t.status, t.updated_at, u.display_name AS assignee FROM sim_tickets t
            LEFT JOIN staff_users u ON u.id = t.assignee_id
-           WHERE ${ACTIVE.replace(/(trashed_at|spam_at|status)/g, "t.$1")} AND t.priority IN ('critical', 'high')
+           WHERE ${ACTIVE.replace(/(trashed_at|spam_at|status|snoozed_until)/g, "t.$1")} AND t.priority IN ('critical', 'high')
            ORDER BY CASE t.priority WHEN 'critical' THEN 0 ELSE 1 END, t.updated_at DESC LIMIT 12`,
         )
         .all() as Row[]).map((r) => ({
@@ -41,7 +42,12 @@ export function overview() {
       })),
     ),
     workload: part(() => {
-      const rows = d.prepare(`SELECT status, priority, count(*) AS c FROM sim_tickets WHERE trashed_at IS NULL AND spam_at IS NULL GROUP BY status, priority`).all() as Row[];
+      const rows = d
+        .prepare(
+          `SELECT status, priority, count(*) AS c FROM sim_tickets WHERE trashed_at IS NULL AND spam_at IS NULL
+           AND (snoozed_until IS NULL OR snoozed_until <= datetime('now')) GROUP BY status, priority`,
+        )
+        .all() as Row[];
       const byStatus: Record<string, number> = {};
       const openByPriority: Record<string, number> = {};
       for (const r of rows) {
