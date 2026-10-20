@@ -31,6 +31,10 @@ writeFileSync(
   join(process.env.HELPDESK_KB_DIR, "policies", "shipping.md"),
   "---\ntitle: Shipping Policy\ntags: [shipping]\n---\n\n## Processing time\n\nOrders ship within 24 to 48 hours.\n",
 );
+writeFileSync(
+  join(process.env.HELPDESK_KB_DIR, "policies", "refunds.md"),
+  "---\ntitle: Refund Policy\ntags: [refund]\n---\n\n## Shipping costs and refunds\n\nShipping is refunded only for damaged items.\n",
+);
 await kbIndex.rebuildIndex("test");
 
 let n = 0;
@@ -215,7 +219,9 @@ async function draftOne(body, answer, extra) {
 }
 
 test("a draft is grounded in the KB, saved for review, and never sent", async () => {
-  const { outcome, detail } = await draftOne("How long does shipping take?", (t) => wrap(t, "Hi Maya,\n\nOrders ship within 24 to 48 hours.\n\nButtons Bebe Support"));
+  const { outcome, detail } = await draftOne("How long does shipping take?", (t) =>
+    wrap(t, "Hi Maya,\n\nOrders ship within 24 to 48 hours.\n\nButtons Bebe Support", { kb_used: ["Shipping Policy", "An article it never saw"] }),
+  );
   assert.equal(outcome.state, "done");
   const d = detail.ai.draft;
   assert.equal(d.action, "reply");
@@ -325,4 +331,25 @@ test("rewrite returns cleaned text and refuses promises", async () => {
   const bad = await call(rewriteRoute.POST, { method: "POST", params: { id }, headers: { cookie: staff.cookie }, body: { instruction: "say we refunded" } });
   assert.equal(bad.status, 502);
   ai.setAiFetch(null);
+});
+
+test("a badly formatted answer gets one repair turn", async () => {
+  let calls = 0;
+  const { outcome, detail } = await draftOne("Repair test: how long is shipping?", (t, body) => {
+    calls++;
+    const repairing = body.messages.some((m) => m.role === "user" && /didn't follow the required format/.test(m.content ?? ""));
+    return repairing ? wrap(t, "Hi,\n\nOrders ship within 24 to 48 hours.") : "Sure! Orders ship fast.";
+  });
+  assert.equal(outcome.state, "done");
+  assert.match(detail.ai.draft.body, /24 to 48 hours/);
+  assert.ok(calls >= 2);
+});
+
+test("a sensitive KB article only marks the draft sensitive if the draft relied on it, and never raises priority", async () => {
+  const plain = await draftOne("How long does shipping take, roughly?", (t) => wrap(t, "Hi,\n\nOrders ship within 24 to 48 hours.", { kb_used: ["Shipping Policy"] }));
+  assert.equal(plain.detail.ai.draft.severity, "normal");
+  assert.equal(plain.detail.ai.draft.sensitive, false);
+  assert.equal(plain.detail.ticket.priority, "normal");
+  const relied = await draftOne("Is shipping refunded if I send it back?", (t) => wrap(t, "Hi,\n\nShipping is refunded only for damaged items.", { kb_used: ["Refund Policy"] }));
+  assert.equal(relied.detail.ai.draft.sensitive, true);
 });

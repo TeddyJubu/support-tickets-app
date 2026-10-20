@@ -14,7 +14,8 @@ export interface ToolContext {
   orderName: string | null;
   /** Filled in as tools run */
   kbTitles: Set<string>;
-  kbSensitive: boolean;
+  /** Titles of sensitive articles that came back (sensitive only if the draft relied on one) */
+  kbSensitiveTitles: Set<string>;
   calls: Array<{ name: string; ok: boolean }>;
 }
 
@@ -80,8 +81,10 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: ToolCo
     const query = String(args.query ?? "").slice(0, 500);
     if (!query.trim()) return JSON.stringify({ error: "query is required" });
     const out = await searchKb(query, 5);
-    for (const r of out.results) ctx.kbTitles.add(r.title);
-    if (out.results.some((r) => r.sensitive)) ctx.kbSensitive = true;
+    for (const r of out.results) {
+      ctx.kbTitles.add(r.title);
+      if (r.sensitive) ctx.kbSensitiveTitles.add(r.title);
+    }
     return JSON.stringify({
       search: out.mode,
       notices: out.notices.map((n) => ({ title: clip(n.title, 200), notice: clip(n.body, 1500), overrides_kb: true })),
