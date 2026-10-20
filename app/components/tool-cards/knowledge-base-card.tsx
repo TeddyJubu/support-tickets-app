@@ -1,5 +1,4 @@
 import {
-  FileText,
   ExternalLink,
   Copy,
   CheckCircle2,

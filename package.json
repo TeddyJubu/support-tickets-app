@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed": "node --no-warnings=ExperimentalWarning scripts/seed.mjs",
     "simulate": "node --no-warnings=ExperimentalWarning scripts/simulate.mjs",
-    "helpdesk": "node --no-warnings scripts/helpdesk.mjs"
+    "helpdesk": "node --no-warnings scripts/helpdesk.mjs",
+    "backup": "node --no-warnings scripts/backup-db.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

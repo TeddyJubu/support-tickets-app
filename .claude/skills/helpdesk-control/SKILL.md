@@ -13,7 +13,7 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 
 | Goal | Command |
 |---|---|
-| Health check (service, site, store, ticket counts) | `npm run helpdesk -- status` |
+| Health check (service, site, store, ticket counts, last backup) | `npm run helpdesk -- status` |
 | List simulated tickets (default) | `npm run helpdesk -- tickets [--q TEXT] [--limit N]` |
 | List historical (Gorgias export) tickets | `npm run helpdesk -- tickets --history [--q TEXT]` |
 | Read a ticket with customer, conversation, history | `npm run helpdesk -- show SIM-1009` |
@@ -26,6 +26,7 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 | Rebuild and restart the live site | `npm run helpdesk -- restart` |
 | Service logs | `npm run helpdesk -- logs 100` |
 | Set the web sign-in password (signs everyone out) | `npm run helpdesk -- set-password`, then `restart` |
+| Back up the databases now / check a backup | `npm run backup` · `npm run backup -- verify data/backups/sim-<time>.db.gz` |
 
 ## Customer simulator
 

@@ -104,6 +104,8 @@ export interface DashboardContextType extends DashboardState {
   // Selected ticket
   selectedTicketId: string | null;
   ticketDetail: TicketDetail | null;
+  /** The open ticket right now, for async callbacks (AI tool handlers); don't call during render */
+  getTicketDetail: () => TicketDetail | null;
   detailLoading: boolean;
   /** The selected ticket failed to load */
   detailError: string | null;

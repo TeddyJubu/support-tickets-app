@@ -3,7 +3,7 @@
 ## Architecture
 
 ```
-browser ──https──▶ Caddy (helpdesk.teddyonfriday.com, Let's Encrypt)
+browser ──https──▶ Caddy (helpdesk.teddyonfriday.com, Let's Encrypt; systemd "svvi-caddy")
                      └─▶ 127.0.0.1:3100  systemd service "support-tickets" (next start)
                            ├─ proxy.ts           sign-in required for every page and API route
                            ├─ data/helpdesk.db   historical export (read-only, real PII)
@@ -12,6 +12,7 @@ browser ──https──▶ Caddy (helpdesk.teddyonfriday.com, Let's Encrypt)
                            └─ Cloudflare D1 "shop-sim" demo store (via D1 HTTP API)
 
 scripts/simulate.mjs ──▶ D1 (places #S orders) ──▶ helpdesk /api/helpdesk/sim/* (opens tickets)
+scripts/backup-db.mjs ──▶ data/backups/*.db.gz ──▶ S3-compatible bucket (BACKUP_S3_URL), nightly timer
 ```
 
 - **App**: Next.js 16 + `@yourgpt/copilot-sdk` / `@yourgpt/llm-sdk` 2.5.0. The chat route is `app/api/chat/route.ts`; the AI tools are in `app/components/ticketing-tools.tsx`.
@@ -56,6 +57,8 @@ Ticket status: a customer message sets `open`, an agent reply sets `pending`, cl
 | `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET` | web sign-in; set both with `npm run helpdesk -- set-password` |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |
 | `SHOP_SIM_ACCOUNT_ID`, `SHOP_D1_DATABASE_ID`, `SHOP_D1_TOKEN` | demo store D1 access (token "helpdesk shop-sim deploy", has D1: Edit) |
+| `BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` (optional) | off-box backups: bucket URL (R2: `https://<account>.r2.cloudflarestorage.com/<bucket>`) and its S3 API keys. Without them backups stay on this machine |
+| `BACKUP_S3_REGION`, `BACKUP_S3_PREFIX` (optional) | `auto` (R2, default) or the AWS region; object key prefix, default `helpdesk/` |
 
 The production server reads `.env.local` at startup: restart after changing it.
 
@@ -63,11 +66,37 @@ The production server reads `.env.local` at startup: restart after changing it.
 
 - Rebuild + restart: `npm run helpdesk -- restart` (= `npm run build && sudo systemctl restart support-tickets`).
 - Logs: `npm run helpdesk -- logs 200` or `sudo journalctl -u support-tickets -f`.
-- Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs from a manual `caddy run`, not systemd; validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo caddy reload … --adapter caddyfile`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
+- Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs under systemd as `svvi-caddy.service` (enabled, so it starts at boot; `Restart=on-failure`). The unit was set up for the SVVI viewer and serves this site from the same Caddyfile: don't disable or rename it. Validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo systemctl reload svvi-caddy`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
+- Backups: `npm run backup` (nightly via `helpdesk-backup.timer`); see [Backups and restore](#backups-and-restore).
 - Search-engine blocking: `app/robots.ts`, robots meta in `app/layout.tsx`, `X-Robots-Tag` in `next.config.ts` and Caddy.
 - Re-seed the export: put CSVs in `data/exports/` and `npm run seed` (rebuilds `data/helpdesk.db`; restart afterwards).
 - Test email-reply idempotency (scratch copy of `data/sim.db`, SES stubbed, sends nothing): `node --no-warnings scripts/test-email-reply.mjs`.
 - Inspect simulated store rows (read-only): `SELECT * FROM orders WHERE name LIKE '#S%'` on D1 `shop-sim`.
+
+## Backups and restore
+
+`scripts/backup-db.mjs` (`npm run backup`) backs up `data/sim.db` (real inbound customer emails, agent replies, the email outbox) and `data/helpdesk.db` (the seeded export). Each DB is copied online with `VACUUM INTO`, which gives a consistent snapshot while the app writes. Never `cp` these files: they use WAL, so a plain copy can miss committed data or be corrupt. The copy is integrity-checked, gzipped to `data/backups/<db>-<UTC time>.db.gz` (mode 600) and uploaded to the bucket in `BACKUP_S3_URL` with signed checksums (until all three `BACKUP_S3_` keys are set, the upload is skipped, not failed). Local copies older than 14 days are deleted (`--keep-days N`), always keeping each DB's newest copy; the bucket expires old copies with its own lifecycle rule. `data/backups/last-run.json` records the last run, and `npm run helpdesk -- status` shows its age and whether the upload was done, skipped or failed. A failed DB or upload makes the run exit 1 (the timer shows as failed).
+
+| Goal | Command |
+|---|---|
+| Back up now | `npm run backup` (`-- --no-upload` for local only) |
+| Check a backup: gunzip, integrity check, row counts | `npm run backup -- verify data/backups/sim-<time>.db.gz` |
+| Fetch a backup from the bucket (then verifies it) | `npm run backup -- download sim-<time>.db.gz` |
+| Timer status / last runs | `systemctl list-timers helpdesk-backup.timer` · `journalctl -u helpdesk-backup -n 50` |
+
+**Nightly timer.** `deploy/systemd/helpdesk-backup.service` + `.timer` (03:30 UTC, `Persistent=true` so a missed run happens at boot). Install once, with the user's OK: `sudo cp deploy/systemd/helpdesk-backup.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now helpdesk-backup.timer`, then `sudo systemctl start helpdesk-backup` and check `journalctl -u helpdesk-backup`.
+
+**Off-box copy.** Any S3-compatible bucket works. For Cloudflare R2: a private bucket with a lifecycle rule that deletes objects under `helpdesk/` after 30 days, and an R2 API token scoped to that bucket with Object Read & Write; put its keys in `.env.local` (`BACKUP_S3_*`). If this machine is lost, `.env.local` goes with it, so keep the bucket keys (and the other keys) in a password manager too.
+
+**Restore** (ask the user first: it replaces live data). Shown for `sim.db`; `helpdesk.db` is the same, or rebuild it from the CSVs with `npm run seed`.
+
+1. Pick a copy and check it: `ls -lt data/backups/` (if the machine is gone: `npm run backup -- download <file>`, or download it from the bucket dashboard), then `npm run backup -- verify data/backups/sim-<time>.db.gz`.
+2. Stop the app: `sudo systemctl stop support-tickets`.
+3. Move the live DB aside **with its WAL files**, so an old `-wal` is never applied to the restored copy: `mkdir -p data/pre-restore && mv data/sim.db data/sim.db-wal data/sim.db-shm data/pre-restore/` (a missing `-wal`/`-shm` is fine).
+4. `gunzip -c data/backups/sim-<time>.db.gz > data/sim.db && chmod 600 data/sim.db`
+5. `sudo systemctl start support-tickets`, then `npm run helpdesk -- status` and `npm run helpdesk -- tickets`.
+
+Email that arrived after the backup isn't in the restored DB. SES also writes each inbound email to `INBOUND_EMAIL_BUCKET` (`inbound/…`), so look there for anything newer. Restore drill (no downtime): `npm run backup -- verify` on the newest copy.
 
 ## Troubleshooting
 
@@ -82,3 +111,5 @@ The production server reads `.env.local` at startup: restart after changing it.
 | sign-in says "Too many attempts" | 10 failures from one IP in 15 minutes; wait, or restart the service to clear it |
 | everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |
 | UI doesn't show new SIM tickets | the Simulated tab polls every 10 s; confirm with `npm run helpdesk -- tickets` |
+| `status` shows the backup as old, `upload FAILED` or `upload skipped` | `journalctl -u helpdesk-backup -n 50`; `grep -c '^BACKUP_S3_' .env.local` should be 3 or more; run `npm run backup` by hand to see the error |
+| site down after a reboot | `systemctl status svvi-caddy support-tickets`; both are enabled and should start at boot |

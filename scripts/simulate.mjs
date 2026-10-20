@@ -146,7 +146,6 @@ async function llm(system, user) {
   return text.replace(/^["']|["']$/g, "");
 }
 
-const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const intentLabel = (intent) =>
   (intent ?? "").split("::").filter((p) => p && p !== "Other").join(" / ") || "general question";
 

@@ -323,7 +323,7 @@ export function ResolutionSuggestionCard({
         </div>
 
         <p className="text-xs text-muted-foreground pt-2 border-t border-border">
-          Follow these steps to resolve the customer's issue. The AI will assist
+          Follow these steps to resolve the customer&apos;s issue. The AI will assist
           you along the way.
         </p>
       </div>

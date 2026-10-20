@@ -229,6 +229,9 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   // Selected ticket
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketDetail, setTicketDetail] = useState<TicketDetail | null>(null);
+  // Same value, for AI tool handlers: they run after render with stale closures
+  const detailRef = useRef<TicketDetail | null>(null);
+  const getTicketDetail = useCallback(() => detailRef.current, []);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const detailRequest = useRef(0);
@@ -270,6 +273,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const selectedRef = useRef<string | null>(null);
 
   const applyDetail = useCallback((detail: TicketDetail, keepInsights: boolean) => {
+    detailRef.current = detail;
     setTicketDetail(detail);
     const ticketStatus: TicketStatus = detail.ticket.closedAt
       ? "closed"
@@ -339,6 +343,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     setStatusFilterState("all");
     selectedRef.current = null;
     setSelectedTicketId(null);
+    detailRef.current = null;
     setTicketDetail(null);
     setTickets([]);
     setTicketTotal(0);
@@ -603,6 +608,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         loadMoreTickets,
         selectedTicketId,
         ticketDetail,
+        getTicketDetail,
         detailLoading,
         detailError,
         selectTicket,
