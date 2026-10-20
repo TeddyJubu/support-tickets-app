@@ -1,10 +1,12 @@
 import { addSimMessage } from "@/lib/sim-db";
 import { isSimulatorRequest, unauthorized } from "@/lib/sim-auth";
+import { audit } from "@/lib/auth";
+import { actorFromRequest, signInRequired } from "@/lib/request-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Agent replies come from the UI; customer messages only from the simulator
+// Agent replies come from signed-in staff (or the server CLI); customer messages only from the simulator
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -21,7 +23,15 @@ export async function POST(
     return Response.json({ error: "author must be agent or customer" }, { status: 400 });
   }
   if (author === "customer" && !isSimulatorRequest(request)) return unauthorized();
-  const detail = addSimMessage(id, author, body.body.slice(0, 10000), body.sender ?? null);
+  let sender = body.sender ?? null;
+  if (author === "agent") {
+    const actor = actorFromRequest(request);
+    if (!actor) return signInRequired();
+    // Staff replies are signed with the signed-in name, never a name the client sends
+    sender = actor.kind === "staff" ? actor.user.displayName : (body.sender ?? "Support (CLI)");
+    audit(actor.name, "reply", id, { channel: "simulated" });
+  }
+  const detail = addSimMessage(id, author, body.body.slice(0, 10000), sender);
   if (!detail) return Response.json({ error: "Ticket not found" }, { status: 404 });
   return Response.json(detail, { status: 201 });
 }

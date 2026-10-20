@@ -29,6 +29,7 @@ import {
   formatTime,
   initials,
 } from "@/lib/helpdesk-format";
+import { apiFetch } from "../api";
 
 const DashboardContext = createContext<DashboardContextType | null>(null);
 
@@ -247,7 +248,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (sourceRef.current === "sim" && statusRef.current !== "all") {
         params.set("status", statusRef.current);
       }
-      const res = await fetch(`/api/helpdesk/tickets?${params}`);
+      const res = await apiFetch(`/api/helpdesk/tickets?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as TicketListResponse;
       if (!current()) return [];
@@ -286,7 +287,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       setDetailLoading(true);
       setDetailError(null);
       try {
-        const res = await fetch(`/api/helpdesk/tickets/${id}`);
+        const res = await apiFetch(`/api/helpdesk/tickets/${id}`);
         if (!res.ok) throw new Error(res.status === 404 ? "Ticket not found" : `HTTP ${res.status}`);
         const detail = (await res.json()) as TicketDetail;
         if (request !== detailRequest.current) return;
@@ -306,7 +307,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const refreshSelected = useCallback(async () => {
     const id = selectedRef.current;
     if (!id) return;
-    const res = await fetch(`/api/helpdesk/tickets/${id}`);
+    const res = await apiFetch(`/api/helpdesk/tickets/${id}`);
     if (!res.ok || selectedRef.current !== id) return;
     applyDetail((await res.json()) as TicketDetail, true);
   }, [applyDetail]);
@@ -415,14 +416,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         }
         setSending(true);
         try {
-          const res = await fetch(
+          const res = await apiFetch(
             isEmail
               ? `/api/helpdesk/email/tickets/${id}/reply`
               : `/api/helpdesk/sim/tickets/${id}/messages`,
             {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ author: "agent", body: content, sender: "You", idempotencyKey }),
+              body: JSON.stringify({ author: "agent", body: content, idempotencyKey }),
             },
           );
           if (!res.ok) {
@@ -486,7 +487,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         });
       }
       try {
-        const res = await fetch(`/api/helpdesk/sim/tickets/${id}`, {
+        const res = await apiFetch(`/api/helpdesk/sim/tickets/${id}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ status: status === "resolved" ? "closed" : status }),

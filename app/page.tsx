@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
 import { DashboardProvider } from "./components/context/dashboard-context";
+import { SessionProvider } from "./components/context/session-context";
 import { TicketingTools } from "./components/ticketing-tools";
 import {
   DemoSidebar,
@@ -46,16 +47,18 @@ function Workspace() {
 
 export default function SupportTicketsPage() {
   return (
-    <DashboardProvider>
-      <CopilotProvider
-        runtimeUrl="/api/chat"
-        systemPrompt={SYSTEM_PROMPT}
-        streaming={true}
-        maxIterations={4}
-      >
-        <TicketingTools />
-        <Workspace />
-      </CopilotProvider>
-    </DashboardProvider>
+    <SessionProvider>
+      <DashboardProvider>
+        <CopilotProvider
+          runtimeUrl="/api/chat"
+          systemPrompt={SYSTEM_PROMPT}
+          streaming={true}
+          maxIterations={4}
+        >
+          <TicketingTools />
+          <Workspace />
+        </CopilotProvider>
+      </DashboardProvider>
+    </SessionProvider>
   );
 }

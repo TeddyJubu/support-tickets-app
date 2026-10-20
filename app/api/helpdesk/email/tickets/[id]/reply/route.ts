@@ -1,15 +1,18 @@
 import { claimEmailReply, completeEmailReply, emailThread, failEmailReply } from "@/lib/sim-db";
 import { EmailNotSentError, sendEmail } from "@/lib/aws-email";
+import { audit } from "@/lib/auth";
+import { requireStaff } from "@/lib/request-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SENDER = "Cute Things Support";
-
-// Agent reply on an email ticket: sent to the customer from support@teddyonfriday.com via SES,
-// then saved on the ticket. Caddy guards /api/helpdesk/email/* with basic auth.
+// Agent reply on an email ticket: sent to the customer from support@teddyonfriday.com via SES
+// (as "Cute Things Support"), then saved on the ticket under the staff member's name.
+// Staff only: the bearer key used by the simulator and CLI can't email customers.
 // The client sends an idempotency key per reply; retrying with the same key never emails twice.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = requireStaff(request);
+  if (user instanceof Response) return user;
   const { id } = await params;
   const input = (await request.json().catch(() => null)) as { body?: string; idempotencyKey?: string } | null;
   const text = input?.body?.trim().slice(0, 10000) ?? "";
@@ -54,7 +57,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    return Response.json(completeEmailReply(key, id, messageId, text, SENDER), { status: 201 });
+    const detail = completeEmailReply(key, id, messageId, text, user.displayName);
+    audit(user.username, "reply", id, { channel: "email", messageId });
+    return Response.json(detail, { status: 201 });
   } catch (err) {
     console.error(`email reply ${key} on ${id}: sent as ${messageId} but not saved`, err);
     return Response.json(

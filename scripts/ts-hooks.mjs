@@ -16,5 +16,11 @@ export async function resolve(specifier, context, next) {
       } catch {}
     }
   }
-  return next(spec, context);
+  try {
+    return await next(spec, context);
+  } catch (err) {
+    // Packages without an exports map ("next/server") need the file extension under ESM
+    if (!local && /^[@\w][^:]*\/[^.]+$/.test(spec)) return next(`${spec}.js`, context);
+    throw err;
+  }
 }

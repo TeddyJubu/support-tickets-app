@@ -15,10 +15,12 @@ import {
   Flag,
   RefreshCw,
   SearchX,
+  LogOut,
 } from "lucide-react";
 import { formatRelative } from "@/lib/helpdesk-format";
 import type { TicketSummary } from "@/lib/helpdesk-types";
 import { useDashboard, type StatusFilter } from "../context/dashboard-context";
+import { useSession } from "../context/session-context";
 import { Avatar, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
 import type { TicketStatus } from "../types";
 
@@ -65,6 +67,23 @@ function ThemeToggle() {
     >
       {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
     </IconButton>
+  );
+}
+
+function SignedInAs() {
+  const { user, signOut } = useSession();
+  if (!user) return null;
+  return (
+    <div className="flex items-center gap-2 border-t border-sidebar-border px-4 py-2.5">
+      <Avatar name={user.displayName} size="sm" />
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate text-xs font-medium text-sidebar-foreground">{user.displayName}</p>
+        <p className="truncate text-[11px] text-muted-foreground">{user.role === "owner" ? "Owner" : "Agent"}</p>
+      </div>
+      <IconButton label="Sign out" onClick={signOut}>
+        <LogOut className="size-4" />
+      </IconButton>
+    </div>
   );
 }
 
@@ -399,6 +418,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
       </nav>
 
       {/* Footer */}
+      <SignedInAs />
       <div className="flex items-center gap-1 border-t border-sidebar-border px-3 py-2">
         <button
           type="button"

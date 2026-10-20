@@ -45,10 +45,10 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 1 — Staff login
 
-- [ ] **1.1 Accounts and sessions (M).** Tables `staff_users` (PBKDF2 hash via `node:crypto`) and `staff_sessions` (random token, hashed at rest, expiry). `npm run helpdesk -- user add <name>` prompts for a password; never echoes it.
-- [ ] **1.2 Login page and gate (M).** `/login`, signed HttpOnly cookie, Next.js proxy/middleware protecting every page and `/api/*` except `/api/health`, `/api/ready`, the SES inbound route (own token) and the simulator routes (bearer key). "Sign in to continue" on expiry.
-- [ ] **1.3 Login rate limit (S).** Per-IP and per-username attempt limits stored in SQLite.
-- [ ] **1.4 Staff identity everywhere (S).** Agent replies, status changes and audit rows record the signed-in user. Enables "Assigned to me".
+- [x] **1.1 Accounts and sessions (M).** Tables `staff_users` (PBKDF2 hash via `node:crypto`) and `staff_sessions` (random token, hashed at rest, expiry). `npm run helpdesk -- user add <name>` prompts for a password; never echoes it.
+- [x] **1.2 Login page and gate (M).** `/login`, signed HttpOnly cookie, Next.js proxy/middleware protecting every page and `/api/*` except `/api/health`, `/api/ready`, the SES inbound route (own token) and the simulator routes (bearer key). "Sign in to continue" on expiry.
+- [x] **1.3 Login rate limit (S).** Per-IP and per-username attempt limits stored in SQLite.
+- [x] **1.4 Staff identity everywhere (S).** Agent replies, status changes and audit rows record the signed-in user. Enables "Assigned to me".
 
 ### Phase 2 — Inbox triage
 

@@ -56,3 +56,13 @@ export async function call(handler, { method = "GET", url = "http://test/", body
   } catch {}
   return { status: res.status, json, text, headers: res.headers };
 }
+
+let staffCount = 0;
+/** Create a staff user and a session; returns { user, cookie } for request headers */
+export async function staffSession({ role = "agent", displayName } = {}) {
+  const auth = await importApp("lib/auth.ts");
+  const username = `staff${++staffCount}`;
+  const user = auth.createUser({ username, displayName: displayName ?? `Staff ${staffCount}`, password: "correct horse battery", role });
+  const { token } = auth.createSession(user.id);
+  return { user, token, cookie: `${auth.SESSION_COOKIE}=${token}` };
+}

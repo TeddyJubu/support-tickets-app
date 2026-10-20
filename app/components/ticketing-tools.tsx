@@ -7,6 +7,7 @@ import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
 import { tool, success } from "@yourgpt/copilot-sdk/core";
 import { useDashboard } from "./context/dashboard-context";
+import { apiFetch } from "./api";
 import type { CustomerRisk, Sentiment, CustomerContext } from "./types";
 import type {
   Customer,
@@ -106,7 +107,7 @@ function ErrorCard({ label, error }: { label: string; error?: string }) {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json() as Promise<T>;
 }

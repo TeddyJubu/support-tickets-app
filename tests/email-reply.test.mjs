@@ -1,7 +1,7 @@
 // Email reply route: idempotency and never emailing a reply twice.
 // SES is stubbed (no email is ever sent) and the database is a scratch one.
 
-import { scratch, stubModule, importApp } from "./helpers.mjs";
+import { scratch, stubModule, importApp, staffSession } from "./helpers.mjs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -43,9 +43,14 @@ const outbox = (key) => raw.prepare(`SELECT * FROM sim_email_outbox WHERE idem_k
 const savedIds = () =>
   raw.prepare(`SELECT message_id FROM sim_email_ids WHERE ticket_id = ?`).all(ticketId).map((r) => r.message_id);
 
-const reply = async (body, idempotencyKey) => {
+const staff = await staffSession({ displayName: "Dana Agent" });
+const reply = async (body, idempotencyKey, cookie = staff.cookie) => {
   const res = await POST(
-    new Request("http://test/reply", { method: "POST", body: JSON.stringify({ body, idempotencyKey }) }),
+    new Request("http://test/reply", {
+      method: "POST",
+      headers: cookie ? { cookie } : {},
+      body: JSON.stringify({ body, idempotencyKey }),
+    }),
     { params: Promise.resolve({ id: ticketId }) },
   );
   return { status: res.status, json: await res.json() };
@@ -58,6 +63,19 @@ const reset = () => {
 
 test("scratch database is in use", () => {
   assert.ok(simDb.getSimTicketDetail(ticketId));
+});
+
+test("only signed-in staff can email a customer", async () => {
+  reset();
+  assert.equal((await reply("hi", key(0), null)).status, 401);
+  assert.equal(ses.calls.length, 0);
+});
+
+test("the saved reply carries the staff member's name", async () => {
+  reset();
+  const r = await reply("Signed reply.", key(9));
+  assert.equal(r.status, 201);
+  assert.equal(r.json.messages.at(-1).sender, "Dana Agent");
 });
 
 test("rejects a reply without an idempotency key", async () => {

@@ -15,6 +15,10 @@
 //   products <query> | customers <query>   search the store export
 //   restart                         rebuild + restart the production service
 //   logs [N]                        last N lines of the service log (default 50)
+//   user list                       staff accounts
+//   user add <username> [--name "Full Name"] [--email E] [--owner]   asks for the password
+//   user password <username>        set a new password (signs the user out everywhere)
+//   user disable|enable <username>
 //
 // Talks to the running helpdesk (SIM_HELPDESK_URL, default http://127.0.0.1:3100)
 // using SIM_API_KEY from .env.local. Never prints secret values.
@@ -42,7 +46,7 @@ const flag = (name) => {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 ? argv[i + 1] : undefined;
 };
-const positional = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.match(/^--(q|limit|offset)$/));
+const positional = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.match(/^--(q|limit|offset|name|email)$/));
 const [command, ...rest] = positional;
 
 async function api(path, init = {}) {
@@ -218,10 +222,81 @@ const commands = {
     console.log(`service ${sh("systemctl", ["is-active", "support-tickets"])}`);
   },
 
+  // Staff accounts live in data/sim.db; these act on the database directly (server only)
+  async user() {
+    const auth = await import("../lib/auth.ts");
+    const [action, username] = rest;
+    if (action === "list") {
+      const users = auth.listUsers();
+      return out(users, () =>
+        users.map((u) => `${u.username.padEnd(16)} ${u.role.padEnd(6)} ${u.disabled ? "disabled" : "active  "} ${u.displayName}${u.email ? ` <${u.email}>` : ""}`).join("\n") || "no staff accounts yet",
+      );
+    }
+    need(username, "user add|password|disable|enable <username>");
+    if (action === "add") {
+      const password = await askPassword(`Password for ${username} (12+ characters): `);
+      const user = auth.createUser({
+        username,
+        displayName: flag("name") ?? username,
+        email: flag("email") ?? null,
+        role: argv.includes("--owner") ? "owner" : "agent",
+        password,
+      });
+      auth.audit("cli", "user_add", null, { username: user.username, role: user.role });
+      return out(user, () => `created ${user.role} ${user.username} (${user.displayName})`);
+    }
+    if (action === "password") {
+      const ok = auth.setPassword(username, await askPassword(`New password for ${username}: `));
+      if (!ok) throw new Error(`no user ${username}`);
+      auth.audit("cli", "user_password", null, { username });
+      return out({ ok }, () => `password changed; ${username} is signed out everywhere`);
+    }
+    if (action === "disable" || action === "enable") {
+      if (!auth.setDisabled(username, action === "disable")) throw new Error(`no user ${username}`);
+      auth.audit("cli", `user_${action}`, null, { username });
+      return out({ ok: true }, () => `${username} ${action}d`);
+    }
+    need(null, "user list|add|password|disable|enable");
+  },
+
   async logs(n = rest[0] ?? "50") {
     console.log(sh("sudo", ["journalctl", "-u", "support-tickets", "-n", String(Number(n) || 50), "--no-pager", "-o", "cat"]));
   },
 };
+
+// Hidden prompt on a terminal; otherwise the first line of stdin (for scripts)
+async function askPassword(prompt) {
+  const { stdin, stdout } = process;
+  if (!stdin.isTTY) {
+    let data = "";
+    for await (const chunk of stdin) data += chunk;
+    return data.split(/\r?\n/)[0];
+  }
+  stdout.write(prompt);
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+  return new Promise((resolve, reject) => {
+    let value = "";
+    const onData = (ch) => {
+      if (ch === "\r" || ch === "\n" || ch === "\u0004") {
+        stdin.setRawMode(false);
+        stdin.pause();
+        stdin.off("data", onData);
+        stdout.write("\n");
+        resolve(value);
+      } else if (ch === "\u0003") {
+        stdin.setRawMode(false);
+        reject(new Error("cancelled"));
+      } else if (ch === "\u007f" || ch === "\b") {
+        value = value.slice(0, -1);
+      } else {
+        value += ch;
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
 
 async function setStatus(id, status) {
   const d = await api(`/api/helpdesk/sim/tickets/${encodeURIComponent(id)}`, {
@@ -232,7 +307,8 @@ async function setStatus(id, status) {
 }
 
 if (!command || !commands[command]) {
-  console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 21).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  const lines = readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1);
+  console.log(lines.slice(0, lines.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
   process.exit(command ? 2 : 0);
 }
 commands[command]().catch((err) => {

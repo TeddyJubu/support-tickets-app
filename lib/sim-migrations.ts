@@ -63,4 +63,48 @@ export const SIM_MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    version: 2,
+    name: "staff accounts, sessions, login attempts, audit log",
+    up: (db) =>
+      db.exec(`
+        CREATE TABLE staff_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          display_name TEXT NOT NULL,
+          email TEXT,
+          role TEXT NOT NULL DEFAULT 'agent',      -- owner | agent
+          password_hash TEXT NOT NULL,             -- pbkdf2$<iterations>$<salt>$<hash>
+          created_at TEXT DEFAULT (datetime('now')),
+          disabled_at TEXT
+        );
+
+        -- Only a SHA-256 of each session token is stored
+        CREATE TABLE staff_sessions (
+          token_hash TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES staff_users(id),
+          created_at TEXT DEFAULT (datetime('now')),
+          last_seen_at TEXT DEFAULT (datetime('now')),
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX staff_sessions_user ON staff_sessions(user_id);
+
+        CREATE TABLE login_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ip TEXT, username TEXT, ok INTEGER NOT NULL,
+          at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX login_attempts_at ON login_attempts(at);
+
+        CREATE TABLE audit_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          at TEXT DEFAULT (datetime('now')),
+          actor TEXT NOT NULL,                     -- staff username, "simulator", "worker", "cli"
+          action TEXT NOT NULL,
+          ticket_id TEXT,
+          detail TEXT                              -- JSON
+        );
+        CREATE INDEX audit_log_ticket ON audit_log(ticket_id, id);
+      `),
+  },
 ];
