@@ -165,4 +165,22 @@ export const SIM_MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 4,
+    name: "notice board",
+    up: (db) =>
+      db.exec(`
+        -- Short owner notices ("warehouse closed Friday") that override the knowledge base
+        CREATE TABLE notices (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          expires_at TEXT,                         -- NULL: until ended
+          ended_at TEXT,
+          ended_by TEXT
+        );
+      `),
+  },
 ];

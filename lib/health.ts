@@ -4,6 +4,7 @@
 import { schemaVersion } from "./db";
 import { getDb } from "./sim-db";
 import { SIM_MIGRATIONS } from "./sim-migrations";
+import { kbHealth } from "./kb/health";
 
 export interface Check {
   ok: boolean;
@@ -25,6 +26,13 @@ export function readiness() {
       const current = schemaVersion(getDb());
       return current === latest ? { ok: true } : { ok: false, detail: `schema ${current}, expected ${latest}` };
     }),
+    // The last good index keeps serving after a failed rebuild, so only "no index at all" is fatal
+    knowledgeBase: check(() => {
+      const kb = kbHealth();
+      if (!kb.indexBuiltAt) return { ok: false, detail: "no index" };
+      return kb.index.state === "failed" ? { ok: true, detail: "last rebuild failed; serving the previous index" } : { ok: true };
+    }),
   };
-  return { ready: Object.values(checks).every((c) => c.ok), checks };
+  // ready: this process can serve (database). healthy: everything around it works too.
+  return { ready: checks.database.ok, healthy: Object.values(checks).every((c) => c.ok), checks };
 }

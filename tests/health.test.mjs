@@ -18,4 +18,7 @@ test("ready reports a migrated database", async () => {
   assert.equal(r.status, 200);
   assert.equal(r.json.ready, true);
   assert.equal(r.json.checks.database.ok, true);
+  // No KB index in a fresh data folder: still ready to serve, but not healthy
+  assert.equal(r.json.checks.knowledgeBase.ok, false);
+  assert.equal(r.json.healthy, false);
 });

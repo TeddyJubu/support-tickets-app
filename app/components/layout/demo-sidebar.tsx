@@ -23,11 +23,12 @@ import type { TicketSummary } from "@/lib/helpdesk-types";
 import { useDashboard } from "../context/dashboard-context";
 import { useSession } from "../context/session-context";
 import { Avatar, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
+import { AppNav } from "../app-nav";
 import { BulkBar, FilterMenu, NewTicketButton, Pager, VIEW_META, ViewPicker } from "./inbox-controls";
 import type { TicketStatus } from "../types";
 
 // A little four-hole button, for Buttons Bebe
-function BrandMark() {
+export function BrandMark() {
   return (
     <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[oklch(0.6_0.2_320)] shadow-soft">
       <svg viewBox="0 0 24 24" className="size-5 text-white" aria-hidden>
@@ -271,7 +272,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
   return (
     <aside className="flex h-full w-[17rem] shrink-0 flex-col xl:w-[19rem] border-r border-sidebar-border bg-sidebar">
       {/* Brand */}
-      <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+      <div className="flex items-center gap-3 px-4 pb-1 pt-4">
         <BrandMark />
         <div className="min-w-0 flex-1 leading-tight">
           <h1 className="text-sm font-semibold tracking-tight text-sidebar-foreground">
@@ -280,6 +281,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
           <p className="text-xs text-muted-foreground">Support inbox</p>
         </div>
       </div>
+      <AppNav className="px-3 pb-2" />
 
       {/* Source */}
       <div className="px-3">

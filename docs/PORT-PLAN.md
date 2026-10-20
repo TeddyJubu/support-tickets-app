@@ -62,13 +62,13 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 3 — Knowledge base
 
-- [ ] **3.1 Import KB content (S).** Copy `kb/intents`, `kb/faq`, `kb/policies`, `kb/tickets` markdown (51 files) into `kb/` here. Do **not** copy `kb/learned` or notices (may hold customer text). Keep their front-matter conventions (`kb/CONVENTIONS.md`).
-- [ ] **3.2 Index (M).** `data/kb.db`: documents + chunks, SQLite FTS5 for keywords, embeddings from Workers AI (`@cf/baai/bge-m3`, multilingual incl. Hebrew) stored as blobs. Rebuild is atomic: build a new file, validate counts, then swap; keep the last good index on failure.
-- [ ] **3.3 Hybrid search (M).** Keyword + vector results fused with reciprocal-rank fusion, category weights, `[SENSITIVE → escalate]` flag from front-matter. `lib/kb-search.ts` + `GET /api/kb/search`.
-- [ ] **3.4 Product sync (S).** Generate product KB docs from the demo store D1 catalog / product export, daily, same atomic swap.
-- [ ] **3.5 KB editor (L).** Console page: list with search and category filter, Preview/Edit, Save with dirty-state guard, New article, Reindex with status polling. Writes only inside allowed folders; every save keeps the previous version (20-version ring in `kb/.backups/`).
-- [ ] **3.6 Notice Board (M).** Short owner notices that override KB answers, optional expiry, "review before publishing" step, end-now with confirmation, reuse expired. Expired notices cleaned by the worker.
-- [ ] **3.7 Real KB tool in the copilot (S).** Replace the mock knowledge-base results with `search_kb`, citing article titles.
+- [x] **3.1 Import KB content (S).** `npm run kb -- import <Shopify-help-desk/kb>` copies intents/faq/policies/tickets (50 articles) into `data/kb/`. The KB is data, not code: it holds business phone numbers, so it is not committed. `kb/learned` and notices are not copied.
+- [x] **3.2 Index (M).** `data/kb.db`: documents + chunks, SQLite FTS5 for keywords, embeddings from Workers AI (`@cf/baai/bge-m3`, multilingual incl. Hebrew) stored as blobs. Rebuild is atomic: build a new file, validate counts, then swap; keep the last good index on failure.
+- [x] **3.3 Hybrid search (M).** Keyword + vector results fused with reciprocal-rank fusion, category weights, `[SENSITIVE → escalate]` flag from front-matter. `lib/kb-search.ts` + `GET /api/kb/search`.
+- [x] **3.4 Product sync (S).** Generate product KB docs from the demo store D1 catalog / product export, daily, same atomic swap.
+- [x] **3.5 KB editor (L).** Console page: list with search and category filter, Preview/Edit, Save with dirty-state guard, New article, Reindex with status polling. Writes only inside allowed folders; every save keeps the previous version (20-version ring in `kb/.backups/`).
+- [x] **3.6 Notice Board (M).** Short owner notices that override KB answers, optional expiry, "review before publishing" step, end-now with confirmation, reuse expired. Expired notices cleaned by the worker.
+- [x] **3.7 Real KB tool in the copilot (S).** Replace the mock knowledge-base results with `search_kb`, citing article titles.
 
 ### Phase 4 — Automatic AI drafts (background pipeline)
 
