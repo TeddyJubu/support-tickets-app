@@ -1,7 +1,10 @@
 import { AwsClient } from "aws4fetch";
 
 // Scoped IAM user helpdesk-friday: s3:GetObject on the inbound bucket, SES send from support@ only.
-const region = process.env.HELPDESK_AWS_REGION ?? "us-west-2";
+// Read when used, not at import: scripts load .env.local after their imports
+const regionOf = () => process.env.HELPDESK_AWS_REGION ?? "us-west-2";
+// A stalled AWS call must not hold up the caller (the worker drafts after sending alerts)
+const AWS_TIMEOUT_MS = 30_000;
 
 // SES definitely did not send the email (bad config, or SES answered with an error), so resending is safe.
 // Any other error (network failure, unreadable response) may have happened after SES accepted it.
@@ -11,7 +14,7 @@ function client(service: string) {
   const accessKeyId = process.env.HELPDESK_AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.HELPDESK_AWS_SECRET_ACCESS_KEY;
   if (!accessKeyId || !secretAccessKey) throw new EmailNotSentError("AWS email credentials are not configured");
-  return new AwsClient({ accessKeyId, secretAccessKey, region, service });
+  return new AwsClient({ accessKeyId, secretAccessKey, region: regionOf(), service });
 }
 
 // Raw MIME that SES stored for an inbound email (no size cap, unlike SES -> SNS content).
@@ -19,7 +22,7 @@ export async function getInboundEmail(bucket: string, key: string) {
   if (bucket !== process.env.INBOUND_EMAIL_BUCKET || !/^inbound\/[\w.-]+$/.test(key)) {
     throw new Error("Unexpected inbound object");
   }
-  const res = await client("s3").fetch(`https://${bucket}.s3.${region}.amazonaws.com/${key}`);
+  const res = await client("s3").fetch(`https://${bucket}.s3.${regionOf()}.amazonaws.com/${key}`, { signal: AbortSignal.timeout(AWS_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`S3 GetObject failed: HTTP ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -54,7 +57,9 @@ export function buildMime(from: string, m: OutboundEmail) {
 // Returns the Message-ID header SES puts on the sent mail, for threading the customer's reply.
 export async function sendEmail(m: OutboundEmail) {
   const from = process.env.OUTBOUND_EMAIL_FROM ?? "Cute Things Support <support@teddyonfriday.com>";
+  const region = regionOf();
   const res = await client("ses").fetch(`https://email.${region}.amazonaws.com/v2/email/outbound-emails`, {
+    signal: AbortSignal.timeout(AWS_TIMEOUT_MS),
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ Content: { Raw: { Data: Buffer.from(buildMime(from, m)).toString("base64") } } }),

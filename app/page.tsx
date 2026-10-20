@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
 import { DashboardProvider } from "./components/context/dashboard-context";
+import { SessionProvider } from "./components/context/session-context";
 import { TicketingTools } from "./components/ticketing-tools";
 import {
   DemoSidebar,
@@ -17,7 +18,9 @@ import {
 const SYSTEM_PROMPT = `You are an AI assistant helping Cute Things' customer support agents (a small online baby and children's store).
 
 **Data:**
-The open ticket, its customer and their recent tickets are in your context. Tickets arrive by email to support@teddyonfriday.com and include the message text. Store data (products, orders, customers) is not connected yet, so lookups may return nothing. Never invent order details, products or policies; say what you don't know.
+The open ticket, its customer and their recent tickets are in your context. Inbox tickets include the full conversation (customers email support@teddyonfriday.com); store data covers simulated customers only, so lookups for emailed customers may return nothing. Archived tickets come from a Gorgias export with subjects, tags, intents, timing and message counts but no message text. Never invent message content, order details or policies; say what you don't know.
+
+**Store policy:** Before answering anything about policy, shipping, returns, refunds, sizing or products, call search_knowledge_base and base the answer on what it returns. Live notices override articles. Results marked sensitive (refunds, damage, cancellations, angry customers…) need a person to decide: draft, but say so. Use the other search tools for products, customers and past tickets.
 
 **Response Style:**
 Be concise by default. Tools display UI cards with full details, so don't repeat that data in your response. Keep it brief and actionable - elaborate only when the agent asks for more details.`;
@@ -46,16 +49,18 @@ function Workspace() {
 
 export default function SupportTicketsPage() {
   return (
-    <DashboardProvider>
-      <CopilotProvider
-        runtimeUrl="/api/chat"
-        systemPrompt={SYSTEM_PROMPT}
-        streaming={true}
-        maxIterations={4}
-      >
-        <TicketingTools />
-        <Workspace />
-      </CopilotProvider>
-    </DashboardProvider>
+    <SessionProvider>
+      <DashboardProvider>
+        <CopilotProvider
+          runtimeUrl="/api/chat"
+          systemPrompt={SYSTEM_PROMPT}
+          streaming={true}
+          maxIterations={4}
+        >
+          <TicketingTools />
+          <Workspace />
+        </CopilotProvider>
+      </DashboardProvider>
+    </SessionProvider>
   );
 }

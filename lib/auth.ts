@@ -1,74 +1,217 @@
-import { createHmac, scrypt, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
-import { isSimulatorRequest } from "./sim-auth";
+// Staff accounts and sessions (data/sim.db).
+// Passwords: PBKDF2-SHA256 with a per-user salt. Sessions: a random token in an HttpOnly
+// cookie; only its SHA-256 is stored, so a copy of the database can't be used to log in.
 
-export { unauthorized } from "./sim-auth";
+import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { toSqlTime, transaction } from "./db";
+import { getDb } from "./sim-db";
 
-// Agent sign-in: one shared password, stored as a scrypt hash in HELPDESK_PASSWORD_HASH
-// (`npm run helpdesk -- set-password` writes it), and a stateless session cookie signed
-// with SESSION_SECRET. The cookie names its user (`sub`) so per-user accounts can follow.
-// Changing SESSION_SECRET signs everyone out.
+export type StaffRole = "owner" | "agent";
 
+export interface StaffUser {
+  id: number;
+  username: string;
+  displayName: string;
+  email: string | null;
+  role: StaffRole;
+}
+
+type Row = Record<string, unknown>;
+
+const ITERATIONS = 310_000;
 export const SESSION_COOKIE = "hd_session";
-export const SESSION_TTL_SECONDS = 12 * 60 * 60;
+const IDLE_HOURS = 12;
+const MAX_DAYS = 7;
 
-type Session = { sub: string; exp: number };
-
-const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
-
-function sessionSecret() {
-  const secret = process.env.SESSION_SECRET ?? "";
-  return secret.length >= 32 ? secret : null;
+export function hashPassword(password: string) {
+  const salt = randomBytes(16);
+  const hash = pbkdf2Sync(password, salt, ITERATIONS, 32, "sha256");
+  return `pbkdf2$${ITERATIONS}$${salt.toString("base64url")}$${hash.toString("base64url")}`;
 }
 
-const sign = (data: string, secret: string) => createHmac("sha256", secret).update(data).digest("base64url");
-
-const safeEqual = (a: string, b: string) =>
-  a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-
-export const loginConfigured = () =>
-  Boolean(sessionSecret()) && (process.env.HELPDESK_PASSWORD_HASH ?? "").startsWith("scrypt:");
-
-export function createSessionToken(sub: string) {
-  const secret = sessionSecret();
-  if (!secret) throw new Error("SESSION_SECRET is not set");
-  const session: Session = { sub, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS };
-  const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
-  return `${payload}.${sign(payload, secret)}`;
-}
-
-export function readSession(token: string | undefined): Session | null {
-  const secret = sessionSecret();
-  if (!secret || !token) return null;
-  const [payload, mac, ...extra] = token.split(".");
-  if (!payload || !mac || extra.length || !safeEqual(mac, sign(payload, secret))) return null;
-  try {
-    const session = JSON.parse(Buffer.from(payload, "base64url").toString()) as Session;
-    return typeof session.sub === "string" && session.exp > Date.now() / 1000 ? session : null;
-  } catch {
-    return null;
-  }
-}
-
-function sessionFrom(request: Request) {
-  const prefix = `${SESSION_COOKIE}=`;
-  const cookie = (request.headers.get("cookie") ?? "").split(/;\s*/).find((c) => c.startsWith(prefix));
-  return readSession(cookie?.slice(prefix.length));
-}
-
-// A signed-in agent, or the operator CLI / simulator with Bearer SIM_API_KEY.
-// proxy.ts checks this for every request; route handlers check it again in case the proxy is bypassed.
-export const isAgentRequest = (request: Request) => Boolean(sessionFrom(request)) || isSimulatorRequest(request);
-
-// Where to go after signing in: only a path on this site, never another origin
-export const safeNextPath = (value: unknown) =>
-  typeof value === "string" && /^\/(?![/\\])[^\u0000-\u001f\u007f]*$/.test(value) ? value : "/";
-
-// HELPDESK_PASSWORD_HASH is scrypt:<salt hex>:<key hex> (Node's scrypt defaults)
-export async function passwordMatches(password: string) {
-  const [scheme, salt, key] = (process.env.HELPDESK_PASSWORD_HASH ?? "").split(":");
-  const expected = Buffer.from(key ?? "", "hex");
-  if (scheme !== "scrypt" || !salt || expected.length < 32) return false;
-  const actual = await scryptAsync(password, Buffer.from(salt, "hex"), expected.length);
+export function verifyPassword(password: string, stored: string) {
+  const [scheme, iterations, salt, hash] = stored.split("$");
+  if (scheme !== "pbkdf2" || !iterations || !salt || !hash) return false;
+  const expected = Buffer.from(hash, "base64url");
+  const actual = pbkdf2Sync(password, Buffer.from(salt, "base64url"), Number(iterations), expected.length, "sha256");
   return timingSafeEqual(actual, expected);
+}
+
+// A hash to compare against when the username doesn't exist, so timing doesn't reveal it
+const DUMMY_HASH = hashPassword(randomBytes(12).toString("hex"));
+
+const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
+
+const toUser = (r: Row): StaffUser => ({
+  id: Number(r.id),
+  username: String(r.username),
+  displayName: String(r.display_name),
+  email: r.email == null ? null : String(r.email),
+  role: r.role === "owner" ? "owner" : "agent",
+});
+
+export function validatePassword(password: string) {
+  if (password.length < 12) return "Use at least 12 characters";
+  if (password.length > 200) return "Use at most 200 characters";
+  return null;
+}
+
+export function createUser(input: {
+  username: string;
+  displayName: string;
+  password: string;
+  email?: string | null;
+  role?: StaffRole;
+}) {
+  if (!/^[a-z0-9._-]{2,40}$/i.test(input.username)) throw new Error("Username: 2–40 letters, digits, . _ -");
+  const problem = validatePassword(input.password);
+  if (problem) throw new Error(problem);
+  const res = getDb()
+    .prepare(
+      `INSERT INTO staff_users (username, display_name, email, role, password_hash) VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(input.username, input.displayName.trim() || input.username, input.email ?? null, input.role ?? "agent", hashPassword(input.password));
+  return getUser(Number(res.lastInsertRowid))!;
+}
+
+export function setPassword(username: string, password: string) {
+  const problem = validatePassword(password);
+  if (problem) throw new Error(problem);
+  const d = getDb();
+  return transaction(d, () => {
+    const user = d.prepare(`SELECT id FROM staff_users WHERE username = ?`).get(username) as Row | undefined;
+    if (!user) return false;
+    d.prepare(`UPDATE staff_users SET password_hash = ? WHERE id = ?`).run(hashPassword(password), Number(user.id));
+    // A new password signs out every existing session
+    d.prepare(`DELETE FROM staff_sessions WHERE user_id = ?`).run(Number(user.id));
+    return true;
+  });
+}
+
+export function setDisabled(username: string, disabled: boolean) {
+  const d = getDb();
+  return transaction(d, () => {
+    const res = d
+      .prepare(`UPDATE staff_users SET disabled_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE username = ?`)
+      .run(disabled ? 1 : 0, username);
+    if (disabled) {
+      d.prepare(`DELETE FROM staff_sessions WHERE user_id IN (SELECT id FROM staff_users WHERE username = ?)`).run(username);
+    }
+    return res.changes > 0;
+  });
+}
+
+export function getUser(id: number) {
+  const r = getDb().prepare(`SELECT * FROM staff_users WHERE id = ? AND disabled_at IS NULL`).get(id) as Row | undefined;
+  return r ? toUser(r) : null;
+}
+
+export function listUsers() {
+  return (getDb().prepare(`SELECT * FROM staff_users ORDER BY username`).all() as Row[]).map((r) => ({
+    ...toUser(r),
+    disabled: r.disabled_at != null,
+    createdAt: String(r.created_at),
+  }));
+}
+
+export const hasAnyUser = () => Boolean(getDb().prepare(`SELECT 1 FROM staff_users LIMIT 1`).get());
+
+/** Staff who can be assigned tickets */
+export function activeStaff() {
+  return (getDb().prepare(`SELECT * FROM staff_users WHERE disabled_at IS NULL ORDER BY display_name`).all() as Row[]).map(toUser);
+}
+
+// ---------- login rate limiting ----------
+
+const WINDOW = "-15 minutes";
+const MAX_PER_IP = 20;
+const MAX_FAILURES_PER_USER = 6;
+
+export function loginBlocked(ip: string, username: string) {
+  const d = getDb();
+  const byIp = d.prepare(`SELECT count(*) AS c FROM login_attempts WHERE ip = ? AND at > datetime('now', ?)`).get(ip, WINDOW) as Row;
+  const byUser = d
+    .prepare(`SELECT count(*) AS c FROM login_attempts WHERE username = ? COLLATE NOCASE AND ok = 0 AND at > datetime('now', ?)`)
+    .get(username, WINDOW) as Row;
+  return Number(byIp.c) >= MAX_PER_IP || Number(byUser.c) >= MAX_FAILURES_PER_USER;
+}
+
+function recordAttempt(ip: string, username: string, ok: boolean) {
+  const d = getDb();
+  d.prepare(`INSERT INTO login_attempts (ip, username, ok) VALUES (?, ?, ?)`).run(ip, username.slice(0, 80), ok ? 1 : 0);
+  d.prepare(`DELETE FROM login_attempts WHERE at < datetime('now', '-1 day')`).run();
+}
+
+export type LoginResult =
+  | { ok: true; user: StaffUser; token: string; expiresAt: Date }
+  | { ok: false; reason: "invalid" | "rate_limited" };
+
+export function login(username: string, password: string, ip: string): LoginResult {
+  if (loginBlocked(ip, username)) return { ok: false, reason: "rate_limited" };
+  const r = getDb()
+    .prepare(`SELECT * FROM staff_users WHERE username = ? AND disabled_at IS NULL`)
+    .get(username) as Row | undefined;
+  const valid = verifyPassword(password, r ? String(r.password_hash) : DUMMY_HASH) && !!r;
+  recordAttempt(ip, username, valid);
+  if (!valid || !r) return { ok: false, reason: "invalid" };
+  const user = toUser(r);
+  const session = createSession(user.id, String(r.password_hash));
+  // The password changed (or the user was disabled) between the check and now
+  if (!session) return { ok: false, reason: "invalid" };
+  const { token, expiresAt } = session;
+  return { ok: true, user, token, expiresAt };
+}
+
+// ---------- sessions ----------
+
+
+/** Null when the user is disabled or, with expectedHash, the password changed (one atomic statement) */
+export function createSession(userId: number, expectedHash?: string): { token: string; expiresAt: Date } | null {
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + MAX_DAYS * 86400e3);
+  const res = getDb()
+    .prepare(
+      `INSERT INTO staff_sessions (token_hash, user_id, expires_at)
+       SELECT ?, id, ? FROM staff_users WHERE id = ? AND disabled_at IS NULL AND (? IS NULL OR password_hash = ?)`,
+    )
+    .run(sha256(token), toSqlTime(expiresAt), userId, expectedHash ?? null, expectedHash ?? null);
+  return res.changes ? { token, expiresAt } : null;
+}
+
+/** The signed-in staff user for a session token, or null (expired, idle too long, disabled) */
+export function sessionUser(token: string | null | undefined): StaffUser | null {
+  if (!token || token.length > 100) return null;
+  const d = getDb();
+  const r = d
+    .prepare(
+      `SELECT u.*, s.token_hash, s.last_seen_at FROM staff_sessions s JOIN staff_users u ON u.id = s.user_id
+       WHERE s.token_hash = ? AND s.expires_at > datetime('now')
+         AND s.last_seen_at > datetime('now', ?) AND u.disabled_at IS NULL`,
+    )
+    .get(sha256(token), `-${IDLE_HOURS} hours`) as Row | undefined;
+  if (!r) return null;
+  // Sliding idle timeout, written at most every five minutes
+  d.prepare(
+    `UPDATE staff_sessions SET last_seen_at = datetime('now')
+     WHERE token_hash = ? AND last_seen_at < datetime('now', '-5 minutes')`,
+  ).run(String(r.token_hash));
+  return toUser(r);
+}
+
+export function endSession(token: string | null | undefined) {
+  if (token) getDb().prepare(`DELETE FROM staff_sessions WHERE token_hash = ?`).run(sha256(token));
+}
+
+export function pruneSessions() {
+  getDb()
+    .prepare(`DELETE FROM staff_sessions WHERE expires_at < datetime('now') OR last_seen_at < datetime('now', ?)`)
+    .run(`-${IDLE_HOURS} hours`);
+}
+
+// ---------- audit log ----------
+
+export function audit(actor: string, action: string, ticketId?: string | null, detail?: unknown) {
+  getDb()
+    .prepare(`INSERT INTO audit_log (actor, action, ticket_id, detail) VALUES (?, ?, ?, ?)`)
+    .run(actor, action, ticketId ?? null, detail === undefined ? null : JSON.stringify(detail));
 }

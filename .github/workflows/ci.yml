@@ -13,9 +13,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -25,10 +25,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Type check
-        run: npx tsc --noEmit
-      - name: Lint
-        run: npx eslint .
-      # Needs no .env.local or data/*.db: routes read both at request time
-      - name: Build
-        run: npm run build
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+      # secret scan, lint, typecheck, unit/route/safety tests, offline scenario QA, build, browser tests.
+      # Needs no .env.local or data/*.db: tests use scratch data and routes read both at request time
+      - name: Release gate
+        run: npm run verify
+      - name: Browser test traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

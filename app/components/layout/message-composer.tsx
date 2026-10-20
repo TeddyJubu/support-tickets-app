@@ -1,11 +1,22 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCopilot } from "@yourgpt/copilot-sdk/react";
-import { Send, Sparkles, Loader2, Mail, Info, CheckCircle2, AlertTriangle, X } from "lucide-react";
+import {
+  Send,
+  Sparkles,
+  Loader2,
+  Mail,
+  Info,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  StickyNote,
+} from "lucide-react";
 import { useDashboard } from "../context/dashboard-context";
 import { Kbd, modKey } from "../ui";
+import { PendingSendBanner, SendAccessSwitch } from "./send-review";
 
 export function MessageComposer() {
   const {
@@ -17,16 +28,32 @@ export function MessageComposer() {
     ticketStatus,
     sending,
     setSidePanel,
+    addNote,
+    sendAccessUntil,
   } = useDashboard();
+  // Internal notes are never sent to the customer
+  const [mode, setMode] = useState<"reply" | "note">("reply");
+  // A note has its own text (per ticket), so switching tabs never sends a note as a reply
+  const [note, setNote] = useState({ ticketId: "", text: "" });
   const { sendMessage, isLoading: copilotBusy } = useCopilot();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const ticket = ticketDetail?.ticket;
-  const isEmail = ticket?.tags === "email";
+  const isEmail = ticket?.channel === "email";
   const archived = !ticket?.simulated;
-  const recipientName = ticketDetail?.customer?.name ?? ticket?.customerName ?? "the customer";
+  const recipientName =
+    ticketDetail?.customer?.name ?? ticket?.customerName ?? "the customer";
   const recipientEmail = ticketDetail?.customer?.email ?? ticket?.customerEmail;
-  const canSend = composeText.trim().length > 0 && !sending;
+  const noteText = note.ticketId === ticket?.id ? note.text : "";
+  const text = mode === "note" ? noteText : composeText;
+  const setText = (value: string) =>
+    mode === "note" ? setNote({ ticketId: ticket?.id ?? "", text: value }) : setComposeText(value);
+  // Inbox replies need Read & write and no unconfirmed earlier send; notes don't
+  const replyLocked =
+    !archived &&
+    mode === "reply" &&
+    (!sendAccessUntil || !!ticketDetail?.pendingSend);
+  const canSend = text.trim().length > 0 && !sending && !replyLocked;
 
   // Grow with the text, up to a cap
   useLayoutEffect(() => {
@@ -34,21 +61,35 @@ export function MessageComposer() {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`;
-  }, [composeText]);
+  }, [text]);
 
   // A drafted reply lands here from the copilot: bring it into focus
   const prevText = useRef(composeText);
   useEffect(() => {
-    if (!prevText.current && composeText.length > 40) textareaRef.current?.focus();
+    if (!prevText.current && composeText.length > 40)
+      textareaRef.current?.focus();
     prevText.current = composeText;
   }, [composeText]);
 
   const send = async (thenClose = false) => {
     if (!canSend || !ticket) return;
-    // Close the ticket the reply went to, even if the agent has moved on
+    if (mode === "note") {
+      const id = ticket.id;
+      if (await addNote(noteText)) setNote((n) => (n.ticketId === id ? { ticketId: id, text: "" } : n));
+      return;
+    }
+    // Inbox tickets open Review; closing happens after the confirmed send
+    if (!archived) {
+      await sendAgentMessage(composeText, "Email", undefined, thenClose);
+      return;
+    }
     const id = ticket.id;
-    const ok = await sendAgentMessage(composeText, "Email", ticket.subject ? `Re: ${ticket.subject}` : undefined);
-    if (ok && thenClose && !archived) await setTicketStatus("closed", id);
+    const ok = await sendAgentMessage(
+      composeText,
+      "Email",
+      ticket.subject ? `Re: ${ticket.subject}` : undefined,
+    );
+    if (ok && thenClose) await setTicketStatus("closed", id);
   };
 
   const draftWithAi = () => {
@@ -59,41 +100,100 @@ export function MessageComposer() {
   return (
     <div className="border-t border-border bg-background px-6 pb-4 pt-3">
       <div className="mx-auto w-full max-w-3xl">
+        {!archived && (
+          <div className="mb-2 flex items-center gap-2">
+            <div
+              className="inline-flex rounded-lg bg-muted p-0.5 text-xs"
+              role="tablist"
+              aria-label="Reply or note"
+            >
+              {(
+                [
+                  ["reply", "Reply", Mail],
+                  ["note", "Internal note", StickyNote],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === value}
+                  onClick={() => setMode(value)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors",
+                    mode === value
+                      ? "bg-background text-foreground shadow-soft"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === "reply" && (
+              <span className="ml-auto">
+                <SendAccessSwitch />
+              </span>
+            )}
+          </div>
+        )}
+
+        {!archived && mode === "reply" && <PendingSendBanner />}
+
         {/* Who this goes to */}
-        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <Mail className="size-3.5" />
-          <span>
-            Reply to <span className="font-medium text-foreground">{recipientName}</span>
-            {recipientEmail && <span className="hidden sm:inline"> &lt;{recipientEmail}&gt;</span>}
-          </span>
-          {isEmail ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-warning/12 px-2 py-0.5 font-medium text-warning">
-              <AlertTriangle className="size-3" />
-              Sends a real email
+        {mode === "note" ? (
+          <div className="mb-2 flex items-center gap-2 text-xs text-warning">
+            <StickyNote className="size-3.5" />
+            Only staff see notes. The customer never receives them.
+          </div>
+        ) : (
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <Mail className="size-3.5" />
+            <span>
+              Reply to{" "}
+              <span className="font-medium text-foreground">
+                {recipientName}
+              </span>
+              {recipientEmail && (
+                <span className="hidden sm:inline">
+                  {" "}
+                  &lt;{recipientEmail}&gt;
+                </span>
+              )}
             </span>
-          ) : archived ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
-              <Info className="size-3" />
-              Archived ticket: replies stay in this view and aren&apos;t sent
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-full bg-chart-5/10 px-2 py-0.5 text-chart-5">
-              Simulated customer replies automatically
-            </span>
-          )}
-        </div>
+            {isEmail ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-warning/12 px-2 py-0.5 font-medium text-warning">
+                <AlertTriangle className="size-3" />
+                Sends a real email
+              </span>
+            ) : archived ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+                <Info className="size-3" />
+                Archived ticket: replies stay in this view and aren&apos;t sent
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-chart-5/10 px-2 py-0.5 text-chart-5">
+                Simulated customer replies automatically
+              </span>
+            )}
+          </div>
+        )}
 
         <div
           className={cn(
-            "rounded-xl border bg-card shadow-soft transition-all focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/15",
-            sending ? "border-input opacity-70" : "border-input",
+            "rounded-xl border shadow-soft transition-all focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/15",
+            mode === "note"
+              ? "bg-warning/5 border-warning/40"
+              : "bg-card border-input",
+            sending && "opacity-70",
           )}
         >
           <textarea
             ref={textareaRef}
             id="reply-box"
-            value={composeText}
-            onChange={(e) => setComposeText(e.target.value)}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
@@ -103,8 +203,12 @@ export function MessageComposer() {
               }
             }}
             disabled={sending}
-            placeholder={`Write a reply to ${recipientName.split(" ")[0]}…`}
-            aria-label="Reply"
+            placeholder={
+              mode === "note"
+                ? "Write a note for your team…"
+                : `Write a reply to ${recipientName.split(" ")[0]}…`
+            }
+            aria-label={mode === "note" ? "Internal note" : "Reply"}
             rows={3}
             className="block max-h-[40vh] min-h-[4.5rem] w-full resize-none bg-transparent px-4 pt-3 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           />
@@ -115,14 +219,18 @@ export function MessageComposer() {
               disabled={copilotBusy}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-primary transition-colors hover:bg-accent disabled:opacity-50"
             >
-              {copilotBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              {copilotBusy ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
               Draft with AI
             </button>
-            {composeText && !sending && (
+            {text && !sending && (
               <button
                 type="button"
                 onClick={() => {
-                  setComposeText("");
+                  setText("");
                   textareaRef.current?.focus();
                 }}
                 className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -138,7 +246,7 @@ export function MessageComposer() {
               to send
             </span>
 
-            {!archived && ticketStatus !== "closed" && (
+            {!archived && mode === "reply" && ticketStatus !== "closed" && (
               <button
                 type="button"
                 onClick={() => send(true)}
@@ -156,8 +264,20 @@ export function MessageComposer() {
               disabled={!canSend}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground shadow-soft transition-all hover:bg-primary/90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
             >
-              {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-3.5" />}
-              {sending ? "Sending…" : "Send"}
+              {sending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : mode === "note" ? (
+                <StickyNote className="size-3.5" />
+              ) : (
+                <Send className="size-3.5" />
+              )}
+              {sending
+                ? "Working…"
+                : mode === "note"
+                  ? "Add note"
+                  : archived
+                    ? "Send"
+                    : "Review & send"}
             </button>
           </div>
         </div>

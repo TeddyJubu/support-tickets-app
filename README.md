@@ -1,184 +1,31 @@
-# Support Tickets App
+# Buttons Bebe support helpdesk
 
-> AI-powered customer support ticket management system with 17 tools and rich Gen UI components.
+A support inbox for Buttons Bebe (a children's clothing store), live at https://helpdesk.teddyonfriday.com behind staff sign-in. It brings over the features of the production Shopify helpdesk (except Gorgias) on its own stack: Next.js 16, TypeScript, `node:sqlite`, Cloudflare Workers AI.
 
-## Features Showcased
+Operating it: see [AGENTS.md](AGENTS.md) and the `helpdesk-control` skill ([SKILL.md](.claude/skills/helpdesk-control/SKILL.md), [reference.md](.claude/skills/helpdesk-control/reference.md)). First deployment of these features: [docs/GO-LIVE.md](docs/GO-LIVE.md). What was ported and why: [docs/PORT-PLAN.md](docs/PORT-PLAN.md).
 
-### AI Tools (17 Total)
+## What it does
 
-**Generative UI Tools**
+- **Inbox**: simulated customers, real email (AWS SES) and staff-opened tickets. Views (Needs reply, Waiting, Assigned to me, Unassigned, Snoozed, Closed, Trash, Spam) with counts, filters, bulk actions, tags, snooze, per-person read state, internal notes, attachments, ticket history.
+- **Automatic AI drafts**: every customer message is triaged by a deterministic, escalate-only classifier and drafted in the background by a worker using Workers AI and read-only tools (knowledge base, the ticket's order and returns, the customer's other tickets). Drafts are cleaned, and anything risky becomes "Needs staff input". Nothing is ever sent by the AI.
+- **Safe sending**: Read & write (30 minutes), review of exactly what goes to whom, confirm with an idempotency key; a newer customer message or a changed reply cancels the review; an unconfirmed send blocks new replies until a person settles it.
+- **Knowledge base**: Markdown articles in `data/kb/` with hybrid search (keywords + multilingual embeddings), an editor, product articles synced daily from the catalog, a Notice Board that overrides articles, and a learning loop that turns approved replies into masked examples.
+- **Copilot**: the side-panel chat with tools for the KB, customers, products, orders, similar tickets and drafting.
+- **Customer rail**: the simulated store customer's order, items, shipping, refunds, order history and returns, cached with a stale fallback.
+- **Operations**: owner alert emails for urgent tickets, a worker heartbeat check, notifications, an Overview page, an ops monitor, encrypted backups with restore checks.
+- **Test system**: a customer simulator (`npm run simulate`) and a private demo store (Cloudflare D1) with simulated orders.
 
-- `draft_response` - Draft email responses with editable preview
-- `compose_email` - Email composition with templates
-
-**Analysis Tools**
-
-- `analyze_sentiment` - Customer emotion analysis with visual indicators
-- `assess_customer_risk` - Churn risk assessment with recommendations
-- `get_customer_context` - Customer history and insights
-
-**Knowledge & Suggestions**
-
-- `search_knowledge_base` - FAQ and help article lookup
-- `get_resolution_suggestions` - AI-powered solution recommendations
-- `find_similar_tickets` - Related ticket discovery
-
-**Action Tools**
-
-- `offer_compensation` - Discount/compensation workflow
-- `schedule_callback` - Appointment booking
-- `escalate_ticket` - Support escalation workflow
-- `process_product_exchange` - Item replacement flow
-- `process_refund` - Refund confirmation
-
-**Data Display Tools**
-
-- `get_customer_profile` - Full customer details card
-- `get_order_details` - Order information display
-- `get_ticket_summary` - Current ticket overview
-
-### Custom UI Components
-
-- 15+ tool card components with rich visualizations
-- Skeleton loading states for all tools
-- Customer conversation view with message history
-- Sidebar with ticket navigation
-- Real-time dashboard context
-
-### SDK Patterns Demonstrated
-
-- `useTool` with custom `render` functions for Gen UI
-- `useAIContext` for real-time ticket data sync
-- Dashboard context provider for state management
-- Tool cards with loading skeletons
-- Compound components for layout
-
-## Quick Start
-
-This is a standalone copy of `examples/support-tickets-demo` from the [Copilot SDK repo](https://github.com/YourGPT/copilot-sdk). It installs `@yourgpt/copilot-sdk` and `@yourgpt/llm-sdk` from npm, so it does not need the monorepo or pnpm.
-
-### Prerequisites
-
-- Node.js 20+
-- Cloudflare account ID and an API token with Workers AI access
-
-### Installation
+## Development
 
 ```bash
-npm install
-cp .env.example .env.local   # then add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
-npm run helpdesk -- set-password   # the password you sign in with
-npm run dev
+npm ci
+npm test                 # unit, route and safety tests (scratch data, fake AI/email/store)
+npm run qa               # scenario checks (offline); --live drafts with Workers AI for grading
+npm run verify           # the full release gate CI runs (adds lint, typecheck, build, browser tests)
+npm run dev              # dev server; create a user first: npm run helpdesk -- user add me --owner
+npm run worker           # the background worker (AI drafts, alerts, monitor, backups)
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Data lives in `data/` (never committed): `sim.db` (inbox), `helpdesk.db` (store export, `npm run seed`), `kb/` and `kb.db` (knowledge base, `npm run kb -- import|index|products`), `backups/`.
 
-## Store Data
-
-The app runs on real store exports (Shopify customers and products, Gorgias tickets) loaded into a local SQLite database:
-
-```bash
-# Put the CSVs in data/exports/ (customers_export.csv, products_export_*.csv, tickets-part-*.csv)
-npm run seed
-```
-
-This writes `data/helpdesk.db` using Node's built-in `node:sqlite` (Node 22+). `data/` is gitignored and never served to the browser; the UI and AI tools read it through `app/api/helpdesk/*` (see `lib/helpdesk-db.ts`). Re-run `npm run seed` after replacing the exports.
-
-The Gorgias export contains ticket metadata (subject, tags, intent, timing, message counts) but no message bodies, so the conversation view and the AI work from that metadata.
-
-Every page and API route requires signing in (`proxy.ts`, `lib/auth.ts`): one shared password, set with `npm run helpdesk -- set-password`, and a 12-hour session cookie. The simulator and the control CLI use `Bearer SIM_API_KEY` instead; the SES webhook checks its own token. Search engines are also blocked via `robots.txt`, a `noindex` robots meta tag and an `X-Robots-Tag` header on every response.
-
-## Customer Simulator
-
-Simulated customers replay real support history so you can test the helpdesk end to end. They show up under the **Simulated** tab with full email conversations; the **History** tab is the read-only Gorgias export.
-
-```bash
-npm run simulate -- --count 5        # open 5 new tickets
-npm run simulate -- --follow-ups     # simulated customers answer your replies
-npm run simulate -- --loop --interval 120 --count 2   # keep going until Ctrl+C
-npm run simulate -- --intent Return  # only replay return requests
-npm run simulate -- --reset          # delete all simulated tickets
-```
-
-Each run picks real customer tickets (by a Shopify customer, with a real support intent), gives the customer a stable pseudonym on the reserved `.test` domain, and has Workers AI write the email from the ticket's subject, intent and tags. Real names, emails and addresses never leave the server. When you reply to a simulated ticket, `--follow-ups` makes the customer answer in context; a customer reply reopens the ticket.
-
-Simulated tickets live in `data/sim.db`, written through `/api/helpdesk/sim/*` (simulator calls need `SIM_API_KEY`).
-
-### Demo store (shop-sim)
-
-The private demo store is the `shop-sim` Worker and its D1 database. The Worker isn't reachable from the internet, so the simulator and helpdesk use the database directly through Cloudflare's D1 API (`lib/store-d1.mjs`). With `SHOP_D1_TOKEN` (an API token with **D1: Edit**) and `SHOP_D1_DATABASE_ID` in `.env.local`, the simulator places an order for each simulated customer before opening the ticket, and the AI can look it up with `get_order_details`.
-
-- Simulated customers are added to the store as pseudonyms tagged `simulated`; simulated orders are named `#S1001`, `#S1002`, … with numbers far above the real ones.
-- The store's variant prices are all `0.00`, so the simulator prices items from the product export.
-- The helpdesk only looks up orders that simulated tickets reference; the store itself holds real customer data.
-
-## Deploy
-
-Deploy like any Next.js app (e.g. import the folder into Vercel) and set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in the project's environment variables.
-
-## Environment Variables
-
-The chat route (`app/api/chat/route.ts`) calls [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) through its OpenAI-compatible endpoint (`https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1`).
-
-| Variable                | Description                                                          |
-| ----------------------- | -------------------------------------------------------------------- |
-| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID (required)                                |
-| `CLOUDFLARE_API_TOKEN`  | API token with Workers AI permission (required)                      |
-| `CF_MODEL`              | Workers AI model with function calling, default `@cf/zai-org/glm-5.3-flash` |
-| `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET` | Web sign-in (required); set both with `npm run helpdesk -- set-password` |
-
-See the [Workers AI model catalog](https://developers.cloudflare.com/workers-ai/models/) for other models that support function calling.
-
-## Project Structure
-
-```
-support-tickets-app/
-├── app/
-│   ├── page.tsx                    # Main dashboard page
-│   ├── layout.tsx                  # Root layout with providers
-│   ├── globals.css                 # Tailwind styles
-│   ├── api/
-│   │   └── chat/route.ts           # Copilot API endpoint
-│   └── components/
-│       ├── ticketing-tools.tsx     # All 17 AI tools definitions
-│       ├── types.ts                # TypeScript interfaces
-│       ├── context/
-│       │   └── dashboard-context.tsx
-│       ├── data/
-│       │   └── mock-data.ts        # Sample tickets & customers
-│       ├── layout/
-│       │   ├── conversation-area.tsx
-│       │   ├── copilot-panel.tsx
-│       │   ├── demo-sidebar.tsx
-│       │   ├── ticket-header.tsx
-│       │   └── message.tsx
-│       └── tool-cards/             # 15+ Gen UI components
-│           ├── draft-response-card.tsx
-│           ├── sentiment-card.tsx
-│           ├── customer-profile-card.tsx
-│           └── ...
-├── components/
-│   └── theme-provider.tsx
-├── lib/
-│   └── utils.ts
-└── README.md
-```
-
-## Testing the AI Workflow
-
-1. Open the app - you'll see a sample support ticket
-2. Ask the Copilot: "What's the customer's issue?"
-3. The AI will use tools to:
-   - Get ticket summary
-   - Analyze customer sentiment
-   - Fetch customer context
-4. Ask: "Draft a response" to see the Gen UI response composer
-5. Try: "Check for similar tickets" or "Suggest resolutions"
-
-## Tech Stack
-
-- Next.js 16
-- React 19
-- Tailwind CSS 4
-- @yourgpt/copilot-sdk
-- @yourgpt/llm-sdk
+Code map: `lib/` server logic (`sim-db`, `triage`, `sending`, `auth`, `classifier/`, `drafting/`, `kb/`, `learning`, `alerts`, `ops/`), `app/api/` routes, `app/components/` UI, `scripts/` CLI, worker and tools, `tests/` (`node --test`) and `tests/e2e/` (Playwright), `deploy/systemd/` unit files.

@@ -41,3 +41,6 @@ next-env.d.ts
 # Seeded customer data (contains PII)
 /data/
 .email-send-password
+/testing/reports/
+/test-results/
+/playwright-report/

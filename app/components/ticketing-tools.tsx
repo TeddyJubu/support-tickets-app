@@ -4,6 +4,7 @@ import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
 import { tool, success } from "@yourgpt/copilot-sdk/core";
 import { useDashboard } from "./context/dashboard-context";
+import { apiFetch } from "./api";
 import type { CustomerRisk, Sentiment, CustomerContext } from "./types";
 import type {
   Customer,
@@ -49,6 +50,11 @@ import {
   CustomerProfileSkeleton,
   CardSkeleton,
 } from "./tool-cards";
+
+interface KbOutcome {
+  results: Array<{ title: string; heading: string | null; text: string; sensitive: boolean }>;
+  notices: Array<{ title: string; body: string }>;
+}
 
 // Order as returned by the demo store (Shopify Admin REST shape)
 interface StoreOrder {
@@ -103,7 +109,7 @@ function ErrorCard({ label, error }: { label: string; error?: string }) {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json() as Promise<T>;
 }
@@ -411,6 +417,53 @@ export function TicketingTools() {
               similarity: t.similarity,
             }))}
             onLinkTicket={(ticket) => dashboard.addLinkedTicket(ticket)}
+          />
+        );
+      },
+    }),
+
+    search_knowledge_base: tool({
+      title: (args) => `Knowledge base: "${args.query || "..."}"`,
+      executingTitle: "Searching the knowledge base...",
+      completedTitle: "Knowledge base",
+      description:
+        "Search the store's knowledge base (policies, FAQ, intents, solved examples, product facts) and the owner's live notices. Use it before answering any policy, shipping, return, sizing or product question. Notices override articles.",
+      location: "client",
+      aiResponseMode: "brief",
+      aiContext: (result) => {
+        const data = result.data as KbOutcome | undefined;
+        if (!data) return "[Knowledge base unavailable]";
+        const notices = data.notices.map((n) => `NOTICE (overrides the KB): ${n.title}: ${n.body}`);
+        const hits = data.results.map(
+          (r) => `${r.title}${r.heading ? ` › ${r.heading}` : ""}${r.sensitive ? " [SENSITIVE: a person must handle this]" : ""}: ${r.text.slice(0, 700)}`,
+        );
+        if (!notices.length && !hits.length) return "[Nothing in the knowledge base matches. Say so; don't guess store policy.]";
+        return `[UI Card Displayed. Ground your answer in these, cite the article titles, and don't invent policy.\n${[...notices, ...hits].join("\n---\n")}]`;
+      },
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The customer's question in plain words" },
+        },
+        required: ["query"],
+      },
+      handler: async (params) =>
+        success(await getJson<KbOutcome>(`/api/kb/search?k=5&q=${encodeURIComponent(String(params.query ?? ""))}`)),
+      render: (props) => {
+        if (isLoading(props.status)) return <KnowledgeBaseSkeleton />;
+        if (props.status === "error") return <ErrorCard label="Knowledge base search" error={props.error} />;
+        const data = props.result?.data as KbOutcome | undefined;
+        if (!data) return null;
+        return (
+          <KnowledgeBaseCard
+            articles={[
+              ...data.notices.map((n) => ({ title: `Notice: ${n.title}`, snippet: n.body, href: "/kb" })),
+              ...data.results.map((r) => ({
+                title: `${r.title}${r.heading ? ` › ${r.heading}` : ""}${r.sensitive ? " (sensitive)" : ""}`,
+                snippet: r.text.slice(0, 400),
+                href: "/kb",
+              })),
+            ]}
           />
         );
       },

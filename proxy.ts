@@ -1,21 +1,53 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { isAgentRequest } from "@/lib/auth";
+// Sign-in gate for the whole site (Next.js 16 proxy, runs on Node.js).
+//   - public: the login page and endpoint, health/readiness, and the SES inbound webhook
+//     (which checks its own token)
+//   - /api/helpdesk/*: a staff session, or the simulator/CLI bearer key (SIM_API_KEY)
+//   - everything else: a staff session; pages redirect to /login, APIs answer 401
+// Cookie-authenticated writes must come from this site (Origin check) to stop CSRF.
 
-// The helpdesk holds real customer data: every page and API route needs a signed-in agent
-// (or the operator's Bearer SIM_API_KEY), except sign-in itself and the SES webhook,
-// which checks its own ?token=. Route handlers check again (lib/auth.ts).
-const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/logout", "/api/helpdesk/inbound/ses", "/robots.txt"]);
+import { NextResponse, type NextRequest } from "next/server";
+import { isSimulatorRequest } from "@/lib/sim-auth";
+import { staffFromRequest } from "@/lib/request-auth";
+
+const PUBLIC = ["/login", "/api/auth/login", "/api/health", "/api/ready", "/api/helpdesk/inbound/ses", "/robots.txt"];
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+const isPublic = (path: string) => PUBLIC.some((p) => path === p || path.startsWith(`${p}/`));
+
+function sameOrigin(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  // Scheme counts too: behind Caddy the site is https (X-Forwarded-Proto), so http://host isn't us
+  const proto = request.headers.get("x-forwarded-proto") === "https" ? "https:" : request.nextUrl.protocol;
+  try {
+    return new URL(origin).origin === `${proto}//${request.headers.get("host")}`;
+  } catch {
+    return false;
+  }
+}
 
 export function proxy(request: NextRequest) {
-  const { pathname, search } = request.nextUrl;
-  if (PUBLIC_PATHS.has(pathname) || isAgentRequest(request)) return NextResponse.next();
-  if (pathname.startsWith("/api/")) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const login = new URL("/login", request.url);
-  if (pathname !== "/") login.searchParams.set("next", pathname + search);
+  const path = request.nextUrl.pathname;
+  if (isPublic(path)) return NextResponse.next();
+
+  if (path.startsWith("/api/helpdesk/") && isSimulatorRequest(request)) return NextResponse.next();
+
+  if (staffFromRequest(request)) {
+    if (!SAFE_METHODS.has(request.method) && !sameOrigin(request)) {
+      return NextResponse.json({ error: "Cross-site request blocked" }, { status: 403 });
+    }
+    return NextResponse.next();
+  }
+
+  if (path.startsWith("/api/")) return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+  // Behind Caddy the server only knows itself as localhost: build the URL from the Host the
+  // browser used (Caddy passes it through) and the original scheme
+  const proto = request.headers.get("x-forwarded-proto") === "https" ? "https" : request.nextUrl.protocol.replace(":", "");
+  const login = new URL(`${proto}://${request.headers.get("host") ?? request.nextUrl.host}/login`);
+  if (path !== "/") login.searchParams.set("next", `${path}${request.nextUrl.search}`);
   return NextResponse.redirect(login);
 }
 
 export const config = {
-  // Build assets (JS, CSS, fonts) hold no data
-  matcher: ["/((?!_next/static/).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

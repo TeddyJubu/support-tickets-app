@@ -238,7 +238,7 @@ async function openTicket(src, runId) {
 
   const body = dryRun ? `(dry run) ${prompt}` : await llm(PERSONA_SYSTEM, prompt);
   const payload = {
-    customer: persona,
+    customer: order?.customer_id != null ? { ...persona, storeCustomerId: String(order.customer_id) } : persona,
     subject,
     body,
     priority: src.priority ?? "normal",
@@ -248,6 +248,8 @@ async function openTicket(src, runId) {
     orderId: order?.id != null ? String(order.id) : null,
     sourceTicketId: String(src.id),
     runId,
+    // Returns and exchanges get a simulated return record, like the store's returns app would have
+    ...(order && /return|exchange|refund/i.test(src.ai_intent ?? "") ? { simReturn: simulatedReturn(order, src.ai_intent) } : {}),
   };
   if (dryRun) {
     console.log(JSON.stringify(payload, null, 2));
@@ -261,6 +263,21 @@ async function openTicket(src, runId) {
     `+ ${detail.ticket.id}  ${persona.firstName} ${persona.lastName}  "${subject}"${order ? `  (order ${order.name})` : ""}  [from #${src.id}]`,
   );
   return detail;
+}
+
+function simulatedReturn(order, intent) {
+  const exchange = /exchange/i.test(intent ?? "");
+  const statuses = ["requested", "label_sent", "in_transit", "received", exchange ? "exchanged" : "refunded"];
+  const status = statuses[Math.floor(Math.random() * statuses.length)];
+  const items = (order.line_items ?? []).slice(0, 1).map((l) => l.title);
+  const value = (order.line_items ?? []).slice(0, 1).reduce((sum, l) => sum + Number(l.price ?? 0) * (l.quantity ?? 1), 0);
+  return {
+    kind: exchange ? "exchange" : "return",
+    status,
+    items,
+    refundAmount: !exchange && status === "refunded" ? Number(value.toFixed(2)) : null,
+    exchangeFor: exchange ? "Different size (requested by the customer)" : null,
+  };
 }
 
 const FOLLOW_UP_SYSTEM = `You role-play a customer of Buttons Bebe, an online children's clothing store, continuing an email thread with support.
@@ -317,7 +334,15 @@ async function runNewTickets(count, runId) {
 async function main() {
   if (args.reset) {
     const sim = new DatabaseSync(join(root, "data/sim.db"));
-    sim.exec("PRAGMA busy_timeout = 5000; DELETE FROM sim_messages; DELETE FROM sim_tickets; DELETE FROM sim_customers; DELETE FROM sqlite_sequence WHERE name = 'sim_tickets';");
+    // Rows that reference tickets, messages or customers go first (foreign keys are enforced)
+    const dependents = [
+      "attachments", "drafts", "jobs", "ticket_tags", "ticket_reads", "sim_email_ids", "sim_email_outbox",
+      "store_snapshots", "sim_returns", "lessons", "send_reviews", "notifications",
+    ];
+    const exists = (t) => sim.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    sim.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");
+    for (const t of dependents) if (exists(t)) sim.exec(`DELETE FROM ${t}`);
+    sim.exec("DELETE FROM sim_messages; DELETE FROM sim_tickets; DELETE FROM sim_customers; DELETE FROM sqlite_sequence WHERE name = 'sim_tickets'; COMMIT");
     sim.close();
     console.log("Deleted all simulated tickets and customers.");
     return;

@@ -2,6 +2,7 @@
 // Seed it with `npm run seed`.
 
 import { DatabaseSync } from "node:sqlite";
+import { dataDir } from "./db";
 import { join } from "node:path";
 import type {
   Customer,
@@ -18,7 +19,7 @@ type Row = Record<string, unknown>;
 
 let db: DatabaseSync | null = null;
 function getDb() {
-  db ??= new DatabaseSync(join(process.cwd(), "data/helpdesk.db"), {
+  db ??= new DatabaseSync(join(dataDir(), "helpdesk.db"), {
     readOnly: true,
   });
   return db;
@@ -323,4 +324,14 @@ export function searchCustomers(q: string, limit = 8): Customer[] {
     )
     .all(match, limit) as Row[];
   return rows.map(toCustomer);
+}
+
+/** Active, published catalog products (for the KB product sync) */
+export function catalogProducts() {
+  return getDb()
+    .prepare(
+      `SELECT handle, title, vendor, type, tags, description, price_min, price_max, options, inventory, final_sale
+       FROM products WHERE status = 'active' AND published = 1 ORDER BY vendor, title`,
+    )
+    .all() as Array<Record<string, unknown>>;
 }

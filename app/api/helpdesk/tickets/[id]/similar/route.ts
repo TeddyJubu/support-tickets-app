@@ -1,6 +1,6 @@
 import { findSimilarTickets } from "@/lib/helpdesk-db";
 import { getSimTicketDetail, isSimTicketId } from "@/lib/sim-db";
-import { isAgentRequest, unauthorized } from "@/lib/auth";
+import { isAgentRequest, signInRequired } from "@/lib/request-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isAgentRequest(request)) return unauthorized();
+  if (!isAgentRequest(request)) return signInRequired();
   const { id } = await params;
   const limit = Math.min(Number(new URL(request.url).searchParams.get("limit")) || 5, 20);
   // Simulated tickets are compared through the historical ticket they replay

@@ -1,12 +1,14 @@
 "use client";
 
-import { Fragment, useEffect, useLayoutEffect, useRef } from "react";
-import { Inbox, AlertCircle, RefreshCw } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Inbox, AlertCircle, RefreshCw, ChevronUp } from "lucide-react";
 import { formatDay } from "@/lib/helpdesk-format";
 import { useDashboard } from "../context/dashboard-context";
 import { Skeleton } from "../ui";
 import { Message } from "./message";
 import { MessageComposer } from "./message-composer";
+import { DraftStrip } from "./draft-strip";
+import { ReviewDialog } from "./send-review";
 
 function ConversationSkeleton() {
   return (
@@ -25,6 +27,9 @@ function ConversationSkeleton() {
   );
 }
 
+// Long threads open on the newest messages; older ones load on request
+const RECENT = 30;
+
 export function ConversationArea() {
   const { messages, ticketDetail, selectedTicketId, detailError, ticketsLoading, selectTicket } =
     useDashboard();
@@ -33,6 +38,11 @@ export function ConversationArea() {
   const lastCount = useRef(0);
   // Only the selected ticket's own detail is shown, so the composer can't reply to the wrong one
   const loaded = !!ticketDetail && ticketDetail.ticket.id === selectedTicketId;
+  // How many messages to show, per ticket (resets when another ticket opens)
+  const [shown, setShown] = useState<{ ticket: string | null; count: number }>({ ticket: null, count: RECENT });
+  const limit = shown.ticket === selectedTicketId ? shown.count : RECENT;
+  const hidden = Math.max(0, messages.length - limit);
+  const visible = hidden ? messages.slice(hidden) : messages;
 
   // Jump to the newest message when a ticket opens; glide when a new one arrives
   useLayoutEffect(() => {
@@ -63,7 +73,7 @@ export function ConversationArea() {
   // Day divider above the first message of each day
   const dividers: Array<string | null> = [];
   let lastDay: string | null = null;
-  for (const msg of messages) {
+  for (const msg of visible) {
     const day = formatDay(msg.date);
     dividers.push(day && day !== lastDay ? day : null);
     if (day) lastDay = day;
@@ -103,7 +113,19 @@ export function ConversationArea() {
             <ConversationSkeleton />
           ) : (
             <div className="space-y-1 animate-in fade-in duration-200">
-              {messages.map((msg, i) => {
+              {hidden > 0 && (
+                <div className="flex justify-center pb-2">
+                  <button
+                    type="button"
+                    onClick={() => setShown({ ticket: selectedTicketId, count: limit + RECENT })}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    <ChevronUp className="size-3.5" />
+                    Show {Math.min(hidden, RECENT)} older message{Math.min(hidden, RECENT) === 1 ? "" : "s"} ({hidden} hidden)
+                  </button>
+                </div>
+              )}
+              {visible.map((msg, i) => {
                 const day = dividers[i];
                 return (
                   <Fragment key={msg.id}>
@@ -125,7 +147,13 @@ export function ConversationArea() {
         </div>
       </div>
 
+      {loaded && ticketDetail.ticket.simulated && (
+        <div className="mx-auto w-full max-w-3xl px-6">
+          <DraftStrip key={ticketDetail.ticket.id} ai={ticketDetail.ai} />
+        </div>
+      )}
       {loaded && <MessageComposer key={ticketDetail.ticket.id} />}
+      <ReviewDialog />
     </div>
   );
 }

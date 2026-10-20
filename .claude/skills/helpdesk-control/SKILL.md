@@ -1,11 +1,11 @@
 ---
 name: helpdesk-control
-description: Operate the Buttons Bebe helpdesk test system in this project — check status, list/read/reply to/close tickets, run the customer simulator (simulated customers who order in the demo store and open tickets), look up simulated store orders, search products/customers, rebuild/restart the live site, and read logs. Use whenever the user asks to check, test, drive, simulate, reset, restart or troubleshoot the helpdesk, its tickets, the simulator or the demo store (shop-sim).
+description: Operate the Buttons Bebe helpdesk test system in this project — check status, list/read/reply to/close tickets, run the customer simulator (simulated customers who order in the demo store and open tickets), manage staff accounts, check the AI drafting worker, the knowledge base, alerts and backups, look up simulated store orders, rebuild/restart the live site, and read logs. Use whenever the user asks to check, test, drive, simulate, reset, restart or troubleshoot the helpdesk, its tickets, AI drafts, KB, the simulator or the demo store (shop-sim).
 ---
 
 # Helpdesk control
 
-The system: a Next.js support helpdesk live at https://helpdesk.teddyonfriday.com, plus a customer simulator and a private demo store (Cloudflare Worker `shop-sim` with its D1 database). Everything below runs from the project root, `/home/ubuntu/support-tickets-app`.
+The system: a Next.js support helpdesk live at https://helpdesk.teddyonfriday.com (staff sign-in), a background worker that drafts AI replies for review, a customer simulator and a private demo store (Cloudflare Worker `shop-sim` with its D1 database). Everything below runs from the project root, `/home/ubuntu/support-tickets-app`.
 
 ## Control CLI
 
@@ -23,10 +23,14 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 | Similar historical tickets | `npm run helpdesk -- similar SIM-1009` |
 | A simulated order in the store | `npm run helpdesk -- order S1002` |
 | Search the catalog / customers (export) | `npm run helpdesk -- products tulle dress` · `customers cohen` |
-| Rebuild and restart the live site | `npm run helpdesk -- restart` |
+| Rebuild and restart the live site (and worker) | `npm run helpdesk -- restart` |
 | Service logs | `npm run helpdesk -- logs 100` |
-| Set the web sign-in password (signs everyone out) | `npm run helpdesk -- set-password`, then `restart` |
-| Back up the databases now / check a backup | `npm run backup` · `npm run backup -- verify data/backups/sim-<time>.db.gz` |
+| AI worker, draft queue, scheduled tasks | `npm run helpdesk -- worker` |
+| Ops report (services, queue, disk, backups, KB) | `npm run helpdesk -- ops` |
+| Staff accounts | `npm run helpdesk -- user list` · `user add <name> --name "Full Name" [--owner]` · `user password <name>` · `user disable <name>` |
+| Encrypted backups (worker, every 6 h) | `npm run helpdesk -- backups` · `backup` · `restore-check <file> --key <private key>` |
+| Database copies to the bucket (nightly timer) / check one | `npm run backup` · `npm run backup -- verify data/backups/sim-<time>.db.gz` |
+| Knowledge base | `npm run kb -- status` · `search <question>` · `index` · `products` |
 
 ## Customer simulator
 
@@ -42,15 +46,17 @@ npm run simulate -- --no-orders                       # tickets without store or
 npm run simulate -- --reset                           # delete simulated tickets (store orders stay)
 ```
 
-A typical test cycle: `simulate --count N` → handle tickets (UI or `reply`) → `simulate --follow-ups` → `show` to inspect → `close`. Run long loops in the background and stop them when done.
+A typical test cycle: `simulate --count N` → the worker drafts replies → handle tickets in the UI (Use draft, Review & send) or with `reply` → `simulate --follow-ups` → `show` to inspect → `close`. Run long loops in the background and stop them when done. Each simulated customer message costs one Workers AI draft; `AUTO_DRAFTS=0` in `.env.local` turns drafting off.
 
 ## Rules
 
-- **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOP_D1_TOKEN`, `SIM_API_KEY`, `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
+- **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOP_D1_TOKEN`, `SIM_API_KEY`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
 - **The demo store holds real customer data** (≈46k real customers, 324k real orders). Only ever write simulated rows (tagged `simulated`, `#S…` orders, `@customers.bb-sim.test` emails). Never modify, export or display real customers/orders, and don't change the `shop-sim` Worker itself.
-- **The helpdesk is on the public internet behind a sign-in.** Every page and API route needs a signed-in agent or `Bearer SIM_API_KEY` (the CLI sends it); keep new routes behind `proxy.ts` and check `isAgentRequest` in the handler. Don't add endpoints that expose store or customer data; the order lookup only serves orders referenced by simulated tickets. The user signs in with a password only they know: never set it for them.
+- **The helpdesk is on the public internet behind staff sign-in** (`proxy.ts`; search engines blocked). Never add a public endpoint that returns store, customer or ticket data. Store reads are limited to simulated customers and `#S` orders. Staff choose their own passwords: never set one for someone (`user add` / `user password` ask the person at the terminal).
+- **Only people send.** The AI drafts; staff replies go out through Review and Confirm & send (`lib/sending.ts`). The CLI `reply` only works on simulated tickets, never on real email tickets.
 - Historical tickets are read-only; `reply`/`close` only work on `SIM-…` tickets.
 - After changing app code, run `npm run helpdesk -- restart` (it builds first). The user's own dev server may run on port 3000 — leave it alone.
-- Ask the user before resetting simulated data, deleting anything, or changing Caddy, systemd or Cloudflare settings.
+- Ask the user before resetting simulated data, deleting anything, or changing Caddy, systemd or Cloudflare settings (including installing the worker/heartbeat units in `deploy/systemd/`).
+- After changing app code, `npm test` and `npm run verify` before `restart`.
 
 For architecture, data stores, configuration keys and troubleshooting, read [reference.md](reference.md).
