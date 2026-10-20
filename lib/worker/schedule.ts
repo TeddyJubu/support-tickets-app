@@ -6,6 +6,7 @@ import { pruneNotices } from "../kb/notices";
 import { syncProducts } from "../kb/products";
 import { rebuildIndex } from "../kb/index";
 import { getState, setState } from "./state";
+import { promoteApprovedLessons } from "../learning";
 
 export interface Task {
   name: string;
@@ -24,6 +25,15 @@ const tasks: Task[] = [
     run: async () => {
       const sync = syncProducts();
       return sync.ok ? { sync, index: await rebuildIndex("product-sync") } : { sync };
+    },
+  },
+  {
+    // Approved lessons become masked examples in the KB, then the index picks them up
+    name: "learning",
+    dailyAtUtc: "03:30",
+    run: async () => {
+      const promoted = promoteApprovedLessons();
+      return promoted ? { promoted, index: await rebuildIndex("learning") } : { promoted };
     },
   },
 ];

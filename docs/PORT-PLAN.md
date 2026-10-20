@@ -99,9 +99,9 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 7 — Learning loop
 
-- [ ] **7.1 Lesson capture (S).** When staff send a reply that differs from or approves an AI draft, store a lesson packet (draft, final, ticket intent). Only delivered replies; never indexed directly.
-- [ ] **7.2 PII masking (S).** Port `feedback/pii.py` rules to `lib/pii.ts` (emails, phones, order numbers, cards, addresses, known names) with tests.
-- [ ] **7.3 Nightly promotion (S).** Worker job: approved lessons → masked exemplar docs in `kb/learned/` → reindex. Learning panel shows counts.
+- [x] **7.1 Lesson capture (S).** When staff send a reply that differs from or approves an AI draft, store a lesson packet (draft, final, ticket intent). Only delivered replies; never indexed directly.
+- [x] **7.2 PII masking (S).** Port `feedback/pii.py` rules to `lib/pii.ts` (emails, phones, order numbers, cards, addresses, known names) with tests.
+- [x] **7.3 Nightly promotion (S).** Worker job: approved lessons → masked exemplar docs in `kb/learned/` → reindex. Learning panel shows counts.
 
 ### Phase 8 — Alerts and notifications
 

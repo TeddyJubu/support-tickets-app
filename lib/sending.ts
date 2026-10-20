@@ -10,6 +10,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { transaction } from "./db";
 import { audit, type StaffUser } from "./auth";
+import { captureLesson } from "./learning";
 import { EmailNotSentError, sendEmail } from "./aws-email";
 import {
   addSimMessage,
@@ -178,6 +179,7 @@ export async function confirmSend(input: {
       return addSimMessage(input.ticketId, "agent", text, input.user.displayName);
     });
     audit(input.user.username, "reply", input.ticketId, { channel: "simulated", key });
+    captureLesson({ ticketId: input.ticketId, sendKey: key, finalText: text, actor: input.user.username });
     return { status: 201, detail: getSimTicketDetail(input.ticketId, input.user.id) ?? detail, channel: t.channel };
   }
 
@@ -206,6 +208,7 @@ export async function confirmSend(input: {
   try {
     completeEmailReply(key, input.ticketId, messageId, text, input.user.displayName);
     audit(input.user.username, "reply", input.ticketId, { channel: "email", messageId, key });
+    captureLesson({ ticketId: input.ticketId, sendKey: key, finalText: text, actor: input.user.username });
     return { status: 201, detail: getSimTicketDetail(input.ticketId, input.user.id), channel: t.channel };
   } catch (err) {
     console.error(`send ${key} on ${input.ticketId}: emailed as ${messageId} but not saved`, err);
@@ -225,6 +228,7 @@ export function resolvePendingSend(ticketId: string, key: string, outcome: "sent
       d.prepare(`UPDATE sim_email_outbox SET status = 'sent', resolved_by = ?, updated_at = datetime('now') WHERE idem_key = ?`).run(user.username, key);
       // Record it in the thread so the conversation matches what the customer got
       addSimMessage(ticketId, "agent", String(r.body), String(r.actor ?? user.displayName));
+      captureLesson({ ticketId, sendKey: key, finalText: String(r.body), actor: user.username });
     } else {
       d.prepare(
         `UPDATE sim_email_outbox SET status = 'failed', error = 'Marked not sent by staff', resolved_by = ?, updated_at = datetime('now') WHERE idem_key = ?`,

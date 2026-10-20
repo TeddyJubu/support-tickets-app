@@ -307,4 +307,33 @@ export const SIM_MIGRATIONS: Migration[] = [
         CREATE INDEX sim_returns_order ON sim_returns(order_name);
       `),
   },
+  {
+    version: 8,
+    name: "learning loop: lessons from delivered replies",
+    up: (db) =>
+      db.exec(`
+        -- One per delivered staff reply. Raw text (may contain personal data) never goes into the
+        -- KB: only owner-approved lessons are masked and promoted nightly.
+        CREATE TABLE lessons (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ticket_id TEXT NOT NULL REFERENCES sim_tickets(id),
+          send_key TEXT UNIQUE,                    -- the send intent it came from
+          subject TEXT,
+          intent TEXT,
+          customer_message TEXT NOT NULL,
+          ai_draft TEXT,                           -- the AI draft for that message, if any
+          final_text TEXT NOT NULL,                -- what was delivered
+          edited INTEGER NOT NULL DEFAULT 0,       -- final differs from the AI draft
+          customer_names TEXT,                     -- JSON, for masking
+          created_by TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | promoted
+          reviewed_by TEXT,
+          reviewed_at TEXT,
+          promoted_at TEXT,
+          kb_path TEXT
+        );
+        CREATE INDEX lessons_status ON lessons(status, id);
+      `),
+  },
 ];

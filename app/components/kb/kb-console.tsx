@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { apiJson, jsonInit } from "../api";
 import { useSession } from "../context/session-context";
 import { Markdown } from "../markdown";
+import { LearningTab } from "./learning-tab";
 
 interface ArticleSummary {
   path: string;
@@ -665,7 +666,7 @@ export function NoticeBoard({ owner }: { owner: boolean }) {
 export function KbConsole() {
   const { user } = useSession();
   const owner = user?.role === "owner";
-  const [tab, setTab] = useState<"articles" | "notices" | "search">("articles");
+  const [tab, setTab] = useState<"articles" | "notices" | "search" | "learning">("articles");
   return (
     <div className="mx-auto max-w-7xl space-y-4 p-4 md:p-6">
       <IndexStatusBar owner={owner} />
@@ -675,6 +676,7 @@ export function KbConsole() {
             ["articles", "Articles"],
             ["notices", "Notice board"],
             ["search", "Test search"],
+            ["learning", "Learning"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -692,6 +694,7 @@ export function KbConsole() {
       {tab === "articles" && <ArticlesTab owner={owner} />}
       {tab === "notices" && <NoticeBoard owner={owner} />}
       {tab === "search" && <TestSearch />}
+      {tab === "learning" && <LearningTab owner={owner} />}
     </div>
   );
 }
