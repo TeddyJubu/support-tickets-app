@@ -1,13 +1,12 @@
 import { claimEmailReply, completeEmailReply, emailThread, failEmailReply } from "@/lib/sim-db";
 import { EmailNotSentError, sendEmail } from "@/lib/aws-email";
 import { isAgentRequest, unauthorized } from "@/lib/auth";
+import { storeSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SENDER = "Cute Things Support";
-
-// Agent reply on an email ticket: sent to the customer from support@teddyonfriday.com via SES,
+// Agent reply on an email ticket: sent to the customer from the store's support address via SES,
 // then saved on the ticket. Needs a signed-in agent; Caddy also guards /api/helpdesk/email/* with basic auth.
 // The client sends an idempotency key per reply; retrying with the same key never emails twice.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -56,7 +55,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    return Response.json(completeEmailReply(key, id, messageId, text, SENDER), { status: 201 });
+    return Response.json(completeEmailReply(key, id, messageId, text, storeSettings().senderName), { status: 201 });
   } catch (err) {
     console.error(`email reply ${key} on ${id}: sent as ${messageId} but not saved`, err);
     return Response.json(

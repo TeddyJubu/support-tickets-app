@@ -45,7 +45,7 @@ export function Avatar({
   );
 }
 
-// A little four-hole button, for Buttons Bebe
+// A little four-hole button: the helpdesk's mark
 export function BrandMark() {
   return (
     <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[oklch(0.6_0.2_320)] shadow-soft">

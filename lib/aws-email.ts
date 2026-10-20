@@ -1,4 +1,5 @@
 import { AwsClient } from "aws4fetch";
+import { outboundFrom } from "./settings";
 
 // Scoped IAM user helpdesk-friday: s3:GetObject on the inbound bucket, SES send from support@ only.
 const region = process.env.HELPDESK_AWS_REGION ?? "us-west-2";
@@ -53,7 +54,7 @@ export function buildMime(from: string, m: OutboundEmail) {
 
 // Returns the Message-ID header SES puts on the sent mail, for threading the customer's reply.
 export async function sendEmail(m: OutboundEmail) {
-  const from = process.env.OUTBOUND_EMAIL_FROM ?? "Cute Things Support <support@teddyonfriday.com>";
+  const from = outboundFrom();
   const res = await client("ses").fetch(`https://email.${region}.amazonaws.com/v2/email/outbound-emails`, {
     method: "POST",
     headers: { "content-type": "application/json" },

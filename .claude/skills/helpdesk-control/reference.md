@@ -53,6 +53,8 @@ Ticket status: a customer message sets `open`, an agent reply sets `pending`, cl
 |---|---|
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | Workers AI |
 | `CF_MODEL` (optional) | chat + simulator model, default `@cf/zai-org/glm-5.3-flash` |
+| `STORE_NAME`, `STORE_DESCRIPTION`, `SUPPORT_EMAIL`, `SENDER_NAME` | this install's store (`lib/settings.ts`): UI name, AI prompt, support address, email display name. Defaults are the demo install's (Cute Things); set them for every new store |
+| `OUTBOUND_EMAIL_FROM` (optional) | full From header for replies, default `<SENDER_NAME> <SUPPORT_EMAIL>` |
 | `SIM_API_KEY` | simulator write access; also the operator CLI's API access |
 | `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET` | web sign-in; set both with `npm run helpdesk -- set-password` |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |

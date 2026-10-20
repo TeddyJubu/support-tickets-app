@@ -21,6 +21,8 @@ const live = process.env.SIM_DB_SOURCE ?? join(root, "data/sim.db");
 if (existsSync(live)) new DatabaseSync(live, { readOnly: true }).exec(`VACUUM INTO '${dbPath.replaceAll("'", "''")}'`);
 process.chdir(scratch);
 for (const k of Object.keys(process.env)) if (/AWS|OUTBOUND_EMAIL/.test(k)) delete process.env[k];
+// The route needs a signed-in agent; the operator key (lib/auth.ts) stands in for one
+process.env.SIM_API_KEY = `test-${crypto.randomUUID()}`;
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
 // Fake SES, controlled per test through globalThis.__ses
@@ -71,7 +73,11 @@ const savedIds = () =>
 
 const reply = async (body, idempotencyKey) => {
   const res = await POST(
-    new Request("http://test/reply", { method: "POST", body: JSON.stringify({ body, idempotencyKey }) }),
+    new Request("http://test/reply", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.SIM_API_KEY}` },
+      body: JSON.stringify({ body, idempotencyKey }),
+    }),
     { params: Promise.resolve({ id: ticketId }) },
   );
   return { status: res.status, json: await res.json() };

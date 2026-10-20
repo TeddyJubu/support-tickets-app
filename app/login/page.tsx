@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { readSession, safeNextPath, SESSION_COOKIE } from "@/lib/auth";
+import { storeSettings } from "@/lib/settings";
 import { BrandMark } from "../components/ui";
 
-export const metadata: Metadata = { title: "Sign in · Buttons Bebe Support" };
+export function generateMetadata(): Metadata {
+  return { title: `Sign in · ${storeSettings().name} Support` };
+}
 
 const ERRORS: Record<string, string> = {
   invalid: "That password isn't right.",
@@ -33,7 +36,7 @@ export default async function LoginPage({
         <div className="mb-6 flex items-center gap-3">
           <BrandMark />
           <div>
-            <h1 className="text-base font-semibold text-card-foreground">Buttons Bebe Support</h1>
+            <h1 className="text-base font-semibold text-card-foreground">{storeSettings().name} Support</h1>
             <p className="text-sm text-muted-foreground">Sign in to the helpdesk</p>
           </div>
         </div>

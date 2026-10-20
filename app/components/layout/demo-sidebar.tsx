@@ -20,6 +20,7 @@ import {
 import { formatRelative } from "@/lib/helpdesk-format";
 import type { TicketSummary } from "@/lib/helpdesk-types";
 import { useDashboard, type StatusFilter } from "../context/dashboard-context";
+import { useStore } from "../context/store-context";
 import { Avatar, BrandMark, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
 import type { TicketStatus } from "../types";
 
@@ -176,6 +177,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
     statusFilter,
     setStatusFilter,
   } = useDashboard();
+  const store = useStore();
 
   // Load the next page when the end of the list scrolls into view
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -206,7 +208,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
         <BrandMark />
         <div className="min-w-0 flex-1 leading-tight">
           <h1 className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-            Buttons Bebe
+            {store.name}
           </h1>
           <p className="text-xs text-muted-foreground">Support inbox</p>
         </div>
@@ -374,7 +376,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
                 </>
               ) : ticketSource === "sim" ? (
                 <>
-                  Email <span className="font-medium text-foreground">support@teddyonfriday.com</span> to create one.
+                  Email <span className="font-medium text-foreground">{store.supportEmail}</span> to create one.
                 </>
               ) : (
                 "The archive is empty."
