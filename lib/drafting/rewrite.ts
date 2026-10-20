@@ -20,7 +20,7 @@ export async function rewriteDraft(input: { text: string; instruction: string; s
         {
           role: "system",
           content:
-            "You rewrite customer-support email drafts for Buttons Bebe (a children's clothing store) following a staff member's instruction. Return only the rewritten email, with no commentary, markers or quotes. Keep every fact from the draft unless the instruction changes it; don't add facts, prices, dates or promises. Never say the store did or will refund, cancel, ship, replace or change anything. Keep it warm and short, signed \"Buttons Bebe Support\".",
+            "You rewrite customer-support email drafts for Cute Things (a small online baby and children's store) following a staff member's instruction. Return only the rewritten email, with no commentary, markers or quotes. Keep every fact from the draft unless the instruction changes it; don't add facts, prices, dates or promises. Never say the store did or will refund, cancel, ship, replace or change anything. Keep it warm and short, signed \"Cute Things Support\".",
         },
         {
           role: "user",

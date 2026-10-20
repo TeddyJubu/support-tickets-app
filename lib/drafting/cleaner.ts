@@ -115,7 +115,7 @@ function shorten(text: string, max: number) {
   const ends = [...text.matchAll(/[.!?](?:["')\]]+)?(?=\s|$)/g)].filter(
     (m) => !/\b(?:e\.g|i\.e|u\.s|u\.k|mr|mrs|ms|dr|vs|etc)\.$/i.test(text.slice(Math.max(0, m.index! - 5), m.index! + 1)),
   );
-  // Greeting and sign-off lines ("Hi Dana,", "Buttons Bebe Support") don't end with . ! ?
+  // Greeting and sign-off lines ("Hi Dana,", "Cute Things Support") don't end with . ! ?
   if (ends.length <= max) return { text, tail: "" };
   const cut = ends[max - 1].index! + ends[max - 1][0].length;
   const tail = text.slice(cut).trim();

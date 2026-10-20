@@ -789,7 +789,7 @@ export function TicketingTools() {
       executingTitle: "Writing response...",
       completedTitle: "Response drafted",
       description:
-        "Display a draft email reply to the customer that the agent can edit and send. Write the full subject and body yourself, addressed to the customer by first name and signed 'Buttons Bebe Support'.",
+        "Display a draft email reply to the customer that the agent can edit and send. Write the full subject and body yourself, addressed to the customer by first name and signed 'Cute Things Support'.",
       location: "client",
       aiResponseMode: "none",
       aiContext: (result) => {
