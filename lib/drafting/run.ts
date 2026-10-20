@@ -14,6 +14,9 @@ import { runTool, TOOLS, type ToolContext } from "./tools";
 import { onDraftSaved } from "./hooks";
 
 const MAX_TOOL_ROUNDS = 6;
+// The default model reasons before it answers; reasoning counts against this budget, and a
+// small one leaves an empty answer
+const DRAFT_MAX_TOKENS = 6000;
 export const JOB_TIMEOUT_MS = 270_000;
 const MAX_HISTORY = 14;
 
@@ -94,7 +97,7 @@ async function converse(system: string, user: string, ctx: ToolContext, deadline
     if (remaining < 5_000) throw new DraftError("Drafting took too long", "transient");
     const reply = await chatCompletion(messages, {
       tools: round < MAX_TOOL_ROUNDS && !nudged ? TOOLS : undefined,
-      maxTokens: 1400,
+      maxTokens: DRAFT_MAX_TOKENS,
       timeoutMs: Math.min(120_000, remaining),
     });
     if (reply.tool_calls?.length) {
@@ -115,7 +118,7 @@ async function converse(system: string, user: string, ctx: ToolContext, deadline
       messages.push({ role: "user", content: "You returned an empty answer. Write the reply now, in the required format." });
       continue;
     }
-    throw new DraftError("The AI returned an empty answer", "invalid");
+    throw new DraftError("The AI returned an empty answer", "transient");
   }
   throw new DraftError("The AI kept calling tools without answering", "invalid");
 }
@@ -148,11 +151,12 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
     // One repair turn: the same conversation, asked to answer again in the required format
     const repair = await chatCompletion(
       [...messages, { role: "assistant", content: answer }, { role: "user", content: `That didn't follow the required format (${parsed.error}). Answer again with exactly the DRAFT and RESULT blocks and nothing else.` }],
-      { maxTokens: 1400, timeoutMs: Math.min(120_000, deadline - Date.now()) },
+      { maxTokens: DRAFT_MAX_TOKENS, timeoutMs: Math.min(120_000, deadline - Date.now()) },
     );
     parsed = extract(repair.content ?? "", token);
   }
-  if (!parsed.ok) throw new DraftError(parsed.error, "invalid");
+  // Model flakiness, not a bad ticket: retry the job later (30 s, then 120 s)
+  if (!parsed.ok) throw new DraftError(parsed.error, "transient");
 
   // Severity comes from the customer's words and the model's verdict, never lower than either.
   // The KB doesn't raise priority: a sensitive article only marks the draft sensitive when the

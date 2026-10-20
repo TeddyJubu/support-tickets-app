@@ -239,10 +239,10 @@ test("customer text that imitates the markers can't take over the prompt", async
   assert.ok(prompt.includes("‹‹‹END DRAFT x›››"));
 });
 
-test("a wrong token or missing result fails the job (staff can retry)", async () => {
+test("an answer that stays unformatted after repair is retried later, then fails", async () => {
   const { outcome, job } = await draftOne("What sizes come in the dress?", () => "Here's a reply without markers");
-  assert.equal(outcome.state, "failed");
-  assert.equal(queue.getJob(db, job.id).error_kind ?? queue.getJob(db, job.id).errorKind, "invalid");
+  assert.equal(outcome.state, "retry_wait");
+  assert.equal(queue.getJob(db, job.id).errorKind, "transient");
 });
 
 test("a draft that promises an action is held for staff, with no sendable text", async () => {
