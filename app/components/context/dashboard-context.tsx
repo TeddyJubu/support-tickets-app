@@ -20,6 +20,7 @@ import type {
   TicketStatus,
 } from "../types";
 import type {
+  InboxView,
   TicketDetail,
   TicketListResponse,
   TicketSummary,
@@ -29,7 +30,7 @@ import {
   formatTime,
   initials,
 } from "@/lib/helpdesk-format";
-import { apiFetch } from "../api";
+import { apiFetch, apiJson, jsonInit } from "../api";
 
 const DashboardContext = createContext<DashboardContextType | null>(null);
 
@@ -40,10 +41,19 @@ export function useDashboard() {
   return context;
 }
 
-const PAGE_SIZE = 50;
+export const PAGE_SIZE = 25;
 
 export type TicketSource = "sim" | "history";
-export type StatusFilter = "all" | "open" | "pending" | "closed";
+
+export interface ListFilters {
+  priority: string;
+  /** staff id, "none", or "" for anyone */
+  assignee: string;
+  tag: string;
+  channel: string;
+  sort: "newest" | "oldest";
+}
+export const NO_FILTERS: ListFilters = { priority: "", assignee: "", tag: "", channel: "", sort: "newest" };
 export type SidePanel = "copilot" | "customer";
 
 export interface Toast {
@@ -82,7 +92,8 @@ const showSourceId = (id: string | null | undefined) => !!id && /^[\w-]{1,24}$/.
 function simMessages(detail: TicketDetail): TicketMessage[] {
   const { ticket } = detail;
   const name = ticket.customerName ?? ticket.customerEmail ?? "Customer";
-  const opened = ticket.tags === "email" ? "Received by email" : "Simulated ticket opened";
+  const opened =
+    ticket.channel === "email" ? "Received by email" : ticket.channel === "staff" ? "Created by staff" : "Simulated ticket opened";
   const messages: TicketMessage[] = [
     {
       id: 0,
@@ -106,11 +117,13 @@ function simMessages(detail: TicketDetail): TicketMessage[] {
       type: m.author,
       sender,
       avatar: initials(sender),
-      channel: "Email",
-      ...(i === 0 ? { emailSubject: ticket.subject ?? "(no subject)" } : {}),
+      ...(m.author === "note" ? {} : { channel: "Email" as const }),
+      ...(i === 0 && m.author !== "note" ? { emailSubject: ticket.subject ?? "(no subject)" } : {}),
       timestamp: time,
       date: m.createdAt,
       content: m.body,
+      truncated: m.truncated,
+      attachments: m.attachments,
     });
   });
   if (ticket.closedAt) {
@@ -197,11 +210,18 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const sourceRef = useRef<TicketSource>("sim");
   const [tickets, setTickets] = useState<TicketSummary[]>([]);
   const [ticketTotal, setTicketTotal] = useState(0);
+  const [viewCounts, setViewCounts] = useState<Partial<Record<InboxView, number>>>({});
   const [ticketQuery, setTicketQuery] = useState("");
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilterState] = useState<StatusFilter>("all");
-  const statusRef = useRef<StatusFilter>("all");
+  const [view, setViewState] = useState<InboxView>("all");
+  const viewRef = useRef<InboxView>("all");
+  const [filters, setFiltersState] = useState<ListFilters>(NO_FILTERS);
+  const filtersRef = useRef<ListFilters>(NO_FILTERS);
+  const [page, setPageState] = useState(0);
+  const pageRef = useRef(0);
+  // Bulk selection (inbox only), cleared whenever the list changes shape
+  const [bulkSelection, setBulkSelection] = useState<Set<string>>(() => new Set());
 
   // Right-hand panel (AI copilot or customer details); null when collapsed
   const sidePanel = useSyncExternalStore(subscribePanel, readPanel, () => "copilot" as SidePanel);
@@ -233,9 +253,11 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   // Bumped by every first-page request; responses from an older list are dropped
   const listRequest = useRef(0);
 
-  const fetchTickets = useCallback(async (query: string, offset: number, quiet = false) => {
-    const request = offset === 0 ? ++listRequest.current : listRequest.current;
+  // Loads one page of the list (the current page unless one is given)
+  const fetchTickets = useCallback(async (query: string, pageNumber?: number, quiet = false) => {
+    const request = ++listRequest.current;
     const current = () => request === listRequest.current;
+    const offset = (pageNumber ?? pageRef.current) * PAGE_SIZE;
     if (!quiet) setTicketsLoading(true);
     setTicketsError(null);
     try {
@@ -245,15 +267,29 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         limit: String(PAGE_SIZE),
         source: sourceRef.current,
       });
-      if (sourceRef.current === "sim" && statusRef.current !== "all") {
-        params.set("status", statusRef.current);
+      if (sourceRef.current === "sim") {
+        params.set("view", viewRef.current);
+        const f = filtersRef.current;
+        for (const key of ["priority", "assignee", "tag", "channel"] as const) if (f[key]) params.set(key, f[key]);
+        if (f.sort !== "newest") params.set("sort", f.sort);
       }
       const res = await apiFetch(`/api/helpdesk/tickets?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as TicketListResponse;
       if (!current()) return [];
-      setTickets((prev) => (offset === 0 ? data.tickets : [...prev, ...data.tickets]));
+      if (pageNumber !== undefined) {
+        pageRef.current = pageNumber;
+        setPageState(pageNumber);
+      }
+      setTickets(data.tickets);
       setTicketTotal(data.total);
+      if (data.counts) setViewCounts(data.counts);
+      // Keep only selections that are still on screen
+      setBulkSelection((prev) => {
+        const ids = new Set(data.tickets.map((t) => t.id));
+        const kept = [...prev].filter((id) => ids.has(id));
+        return kept.length === prev.size ? prev : new Set(kept);
+      });
       return data.tickets;
     } catch (err) {
       if (current()) setTicketsError(err instanceof Error ? err.message : "Request failed");
@@ -292,6 +328,11 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         const detail = (await res.json()) as TicketDetail;
         if (request !== detailRequest.current) return;
         applyDetail(detail, false);
+        // Opening a ticket marks its new customer messages as read (for this staff member)
+        if (detail.ticket.simulated && detail.ticket.unread) {
+          apiFetch(`/api/helpdesk/sim/tickets/${id}`, jsonInit("PATCH", { read: true })).catch(() => {});
+          setTickets((prev) => prev.map((t) => (t.id === id ? { ...t, unread: false } : t)));
+        }
       } catch (err) {
         if (request === detailRequest.current) {
           setDetailError(err instanceof Error ? err.message : "Request failed");
@@ -312,26 +353,44 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     applyDetail((await res.json()) as TicketDetail, true);
   }, [applyDetail]);
 
-  // Debounced search; selects the first ticket when nothing is open
+  // Debounced search; selects the first ticket when nothing is open. Back to page 1 on any change.
   useEffect(() => {
     const timer = setTimeout(async () => {
       const list = await fetchTickets(ticketQuery, 0);
       if (!selectedRef.current && list[0]) selectTicket(list[0].id);
     }, ticketQuery ? 300 : 0);
     return () => clearTimeout(timer);
-  }, [ticketQuery, ticketSource, statusFilter, fetchTickets, selectTicket]);
+  }, [ticketQuery, ticketSource, view, filters, fetchTickets, selectTicket]);
 
-  const setStatusFilter = useCallback((filter: StatusFilter) => {
-    statusRef.current = filter;
+  const setView = useCallback((next: InboxView) => {
+    viewRef.current = next;
     setTickets([]);
     setTicketTotal(0);
-    setStatusFilterState(filter);
+    setBulkSelection(new Set());
+    setViewState(next);
   }, []);
+
+  const setFilters = useCallback((next: Partial<ListFilters> | null) => {
+    const merged = next === null ? NO_FILTERS : { ...filtersRef.current, ...next };
+    filtersRef.current = merged;
+    setBulkSelection(new Set());
+    setFiltersState(merged);
+  }, []);
+
+  const setPage = useCallback(
+    (next: number) => {
+      fetchTickets(ticketQuery, Math.max(0, next));
+    },
+    [fetchTickets, ticketQuery],
+  );
 
   const setTicketSource = useCallback((source: TicketSource) => {
     sourceRef.current = source;
-    statusRef.current = "all";
-    setStatusFilterState("all");
+    viewRef.current = "all";
+    setViewState("all");
+    filtersRef.current = NO_FILTERS;
+    setFiltersState(NO_FILTERS);
+    setBulkSelection(new Set());
     selectedRef.current = null;
     setSelectedTicketId(null);
     setTicketDetail(null);
@@ -346,22 +405,18 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     if (ticketSource !== "sim") return;
     const timer = setInterval(() => {
       if (document.hidden) return;
-      fetchTickets(ticketQuery, 0, true);
+      fetchTickets(ticketQuery, undefined, true);
       if (selectedRef.current?.startsWith("SIM-")) refreshSelected();
     }, 10000);
     return () => clearInterval(timer);
   }, [ticketSource, ticketQuery, fetchTickets, refreshSelected]);
 
   const retryTickets = useCallback(async () => {
-    const list = await fetchTickets(ticketQuery, 0);
+    const list = await fetchTickets(ticketQuery);
     if (!selectedRef.current && list[0]) selectTicket(list[0].id);
   }, [fetchTickets, ticketQuery, selectTicket]);
 
-  const loadMoreTickets = useCallback(() => {
-    if (!ticketsLoading && tickets.length < ticketTotal) {
-      fetchTickets(ticketQuery, tickets.length);
-    }
-  }, [fetchTickets, ticketQuery, tickets.length, ticketTotal, ticketsLoading]);
+  const hasNextPage = (page + 1) * PAGE_SIZE < ticketTotal;
 
   const selectAdjacentTicket = useCallback(
     async (direction: -1 | 1) => {
@@ -369,13 +424,111 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (index < 0) return;
       const next = tickets[index + direction];
       if (next) return selectTicket(next.id);
-      // At the end of the loaded page: fetch the next one and continue into it
-      if (direction === 1 && tickets.length < ticketTotal && !ticketsLoading) {
-        const more = await fetchTickets(ticketQuery, tickets.length);
+      // At the edge of the page: turn the page and continue into it
+      if (ticketsLoading) return;
+      if (direction === 1 && hasNextPage) {
+        const more = await fetchTickets(ticketQuery, page + 1);
         if (more[0] && selectedRef.current === selectedTicketId) selectTicket(more[0].id);
+      } else if (direction === -1 && page > 0) {
+        const prev = await fetchTickets(ticketQuery, page - 1);
+        if (prev.length && selectedRef.current === selectedTicketId) selectTicket(prev[prev.length - 1].id);
       }
     },
-    [tickets, selectedTicketId, selectTicket, ticketTotal, ticketsLoading, fetchTickets, ticketQuery],
+    [tickets, selectedTicketId, selectTicket, hasNextPage, page, ticketsLoading, fetchTickets, ticketQuery],
+  );
+
+  // ---------- triage ----------
+
+  /** Change the open ticket (or another by id); resolves false on failure */
+  const updateTicket = useCallback(
+    async (changes: Record<string, unknown>, ticketId?: string, success?: string): Promise<boolean> => {
+      const id = ticketId ?? selectedRef.current;
+      if (!id?.startsWith("SIM-")) return false;
+      try {
+        const detail = await apiJson<TicketDetail>(`/api/helpdesk/sim/tickets/${id}`, jsonInit("PATCH", changes));
+        if (selectedRef.current === id) applyDetail(detail, true);
+        if (success) notify(success);
+        fetchTickets(ticketQuery, undefined, true);
+        return true;
+      } catch (err) {
+        notify(`Couldn't update ${id}: ${err instanceof Error ? err.message : "error"}`, "error");
+        return false;
+      }
+    },
+    [applyDetail, notify, fetchTickets, ticketQuery],
+  );
+
+  const toggleBulk = useCallback((id: string) => {
+    setBulkSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const setBulkAll = useCallback(
+    (all: boolean) => setBulkSelection(all ? new Set(tickets.filter((t) => t.simulated).map((t) => t.id)) : new Set()),
+    [tickets],
+  );
+
+  const applyBulk = useCallback(
+    async (changes: Record<string, unknown>, label: string): Promise<boolean> => {
+      const ids = [...bulkSelection];
+      if (!ids.length) return false;
+      try {
+        const { updated } = await apiJson<{ updated: string[] }>("/api/helpdesk/sim/tickets/bulk", jsonInit("POST", { ids, changes }));
+        notify(`${label}: ${updated.length} ticket${updated.length === 1 ? "" : "s"}`);
+        setBulkSelection(new Set());
+        fetchTickets(ticketQuery, undefined, true);
+        if (selectedRef.current && ids.includes(selectedRef.current)) refreshSelected();
+        return true;
+      } catch (err) {
+        notify(`Bulk change failed: ${err instanceof Error ? err.message : "error"}`, "error");
+        return false;
+      }
+    },
+    [bulkSelection, notify, fetchTickets, ticketQuery, refreshSelected],
+  );
+
+  const createTicket = useCallback(
+    async (input: { email: string; name: string; subject: string; note: string }): Promise<string | null> => {
+      try {
+        const detail = await apiJson<TicketDetail>("/api/helpdesk/tickets", jsonInit("POST", input));
+        notify(`${detail.ticket.id} created`);
+        await fetchTickets(ticketQuery, undefined, true);
+        await selectTicket(detail.ticket.id);
+        return detail.ticket.id;
+      } catch (err) {
+        notify(`Couldn't create the ticket: ${err instanceof Error ? err.message : "error"}`, "error");
+        return null;
+      }
+    },
+    [notify, fetchTickets, ticketQuery, selectTicket],
+  );
+
+  const addNote = useCallback(
+    async (content: string): Promise<boolean> => {
+      const id = selectedRef.current;
+      if (!id?.startsWith("SIM-") || !content.trim()) return false;
+      setSending(true);
+      try {
+        const detail = await apiJson<TicketDetail>(
+          `/api/helpdesk/sim/tickets/${id}/messages`,
+          jsonInit("POST", { author: "note", body: content }),
+        );
+        if (selectedRef.current === id) applyDetail(detail, true);
+        setState((prev) => (prev.composeText === content ? { ...prev, composeText: "" } : prev));
+        notify("Note added");
+        return true;
+      } catch (err) {
+        notify(`Note not saved: ${err instanceof Error ? err.message : "error"}`, "error");
+        return false;
+      } finally {
+        setSending(false);
+      }
+    },
+    [applyDetail, notify],
   );
 
   // Message management
@@ -406,7 +559,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (id.startsWith("SIM-")) {
         // Simulated tickets: save the reply so the simulated customer can answer it
         // Email tickets: really sends to the customer (password-protected route)
-        const isEmail = ticketDetail.ticket.tags === "email";
+        const isEmail = ticketDetail.ticket.channel === "email";
         let idempotencyKey: string | undefined;
         if (isEmail) {
           const last = pendingEmailReply.current;
@@ -437,7 +590,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
           setState((prev) => (prev.composeText === content ? { ...prev, composeText: "" } : prev));
           if (selectedRef.current === id) applyDetail((await res.json()) as TicketDetail, true);
           notify(isEmail ? "Reply emailed to the customer" : "Reply sent");
-          fetchTickets(ticketQuery, 0, true);
+          fetchTickets(ticketQuery, undefined, true);
           return true;
         } catch {
           notify("Reply not sent: network error", "error");
@@ -501,7 +654,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
               ? `${id} marked as waiting on customer`
               : `${id} reopened`,
         );
-        fetchTickets(ticketQuery, 0, true);
+        fetchTickets(ticketQuery, undefined, true);
         return true;
       } catch (err) {
         if (onScreen()) setState((prev) => ({ ...prev, ticketStatus: previous }));
@@ -579,8 +732,21 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         ...state,
         ticketSource,
         setTicketSource,
-        statusFilter,
-        setStatusFilter,
+        view,
+        setView,
+        viewCounts,
+        filters,
+        setFilters,
+        page,
+        setPage,
+        hasNextPage,
+        bulkSelection,
+        toggleBulk,
+        setBulkAll,
+        applyBulk,
+        updateTicket,
+        createTicket,
+        addNote,
         sidePanel,
         setSidePanel,
         toasts,
@@ -595,7 +761,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         ticketsError,
         retryTickets,
         setTicketQuery,
-        loadMoreTickets,
         selectedTicketId,
         ticketDetail,
         detailLoading,

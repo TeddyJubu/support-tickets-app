@@ -6,13 +6,16 @@
 
 import { openDatabase, transaction } from "./db";
 import { SIM_MIGRATIONS } from "./sim-migrations";
-import type {
-  Customer,
-  CustomerStats,
-  SimMessage,
-  Ticket,
-  TicketDetail,
-  TicketSummary,
+import {
+  INBOX_VIEWS,
+  PRIORITIES,
+  type Customer,
+  type CustomerStats,
+  type InboxView,
+  type SimMessage,
+  type Ticket,
+  type TicketDetail,
+  type TicketSummary,
 } from "./helpdesk-types";
 
 type Row = Record<string, unknown>;
@@ -31,18 +34,11 @@ const secondsBetween = (a: unknown, b: unknown) =>
 
 export const isSimTicketId = (id: string) => /^SIM-\d+$/.test(id);
 
-function counts(ticketId: string) {
-  const r = getDb()
-    .prepare(
-      `SELECT sum(author = 'customer') AS c, sum(author = 'agent') AS a
-       FROM sim_messages WHERE ticket_id = ?`,
-    )
-    .get(ticketId) as Row;
-  return { customer: n(r.c), agent: n(r.a) };
-}
+const TAG_SEP = "\u001f";
 
 function toSummary(r: Row): TicketSummary {
-  const c = counts(String(r.id));
+  const lastCustomer = s(r.last_customer_at);
+  const readAt = s(r.read_at);
   return {
     id: String(r.id),
     subject: s(r.subject),
@@ -53,21 +49,32 @@ function toSummary(r: Row): TicketSummary {
     aiIntent: s(r.ai_intent),
     createdAt: iso(r.created_at),
     closedAt: iso(r.closed_at),
-    agentMessages: c.agent,
-    customerMessages: c.customer,
+    agentMessages: n(r.agent_count),
+    customerMessages: n(r.customer_count),
     simulated: true,
     status: s(r.status),
     updatedAt: iso(r.updated_at),
+    channel: s(r.channel) ?? "simulator",
+    assignee: r.assignee_id == null ? null : { id: n(r.assignee_id), displayName: s(r.assignee_name) ?? "Unknown" },
+    snoozedUntil: r.snoozed_until && String(r.snoozed_until) > nowSql() ? iso(r.snoozed_until) : null,
+    trashed: r.trashed_at != null,
+    spam: r.spam_at != null,
+    tagList: r.tag_list ? String(r.tag_list).split(TAG_SEP).sort() : [],
+    unread: !!lastCustomer && (!readAt || lastCustomer > readAt),
   };
 }
+
+/** SQLite's datetime('now') format, for comparing stored times in JS */
+export const nowSql = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
 function toTicket(r: Row): Ticket {
   return {
     ...toSummary(r),
-    channel: "email",
-    integration: r.tags === "email" ? "Email (support@teddyonfriday.com)" : "Simulator",
-    createdByAgent: false,
-    assigneeName: null,
+    channel: s(r.channel) ?? "simulator",
+    integration:
+      r.channel === "email" ? "Email (support@teddyonfriday.com)" : r.channel === "staff" ? "Created by staff" : "Simulator",
+    createdByAgent: r.channel === "staff",
+    assigneeName: s(r.assignee_name),
     assigneeEmail: null,
     firstResponseSeconds: secondsBetween(r.created_at, r.first_response_at),
     resolutionSeconds: secondsBetween(r.created_at, r.closed_at),
@@ -111,56 +118,115 @@ function toCustomer(r: Row): Customer {
   };
 }
 
-const TICKET_SELECT = `SELECT t.*, c.first_name, c.last_name, c.email
-  FROM sim_tickets t LEFT JOIN sim_customers c ON c.id = t.customer_id`;
+// The first ? is the viewing staff member's id (for unread state); pass 0 for nobody
+const TICKET_SELECT = `SELECT t.*, c.first_name, c.last_name, c.email, u.display_name AS assignee_name,
+    (SELECT group_concat(tag, char(31)) FROM ticket_tags g WHERE g.ticket_id = t.id) AS tag_list,
+    (SELECT count(*) FROM sim_messages m WHERE m.ticket_id = t.id AND m.author = 'customer') AS customer_count,
+    (SELECT count(*) FROM sim_messages m WHERE m.ticket_id = t.id AND m.author = 'agent') AS agent_count,
+    (SELECT max(created_at) FROM sim_messages m WHERE m.ticket_id = t.id AND m.author = 'customer') AS last_customer_at,
+    (SELECT read_at FROM ticket_reads r WHERE r.ticket_id = t.id AND r.user_id = ?) AS read_at
+  FROM sim_tickets t
+  LEFT JOIN sim_customers c ON c.id = t.customer_id
+  LEFT JOIN staff_users u ON u.id = t.assignee_id`;
 
-export function listSimTickets({
-  q = "",
-  status = "",
-  offset = 0,
-  limit = 50,
-}: {
+// Which tickets each inbox view shows. "Active" = not trashed, not spam, not snoozed right now.
+const ACTIVE = `t.trashed_at IS NULL AND t.spam_at IS NULL AND (t.snoozed_until IS NULL OR t.snoozed_until <= datetime('now'))`;
+const VIEW_SQL: Record<InboxView, string> = {
+  all: ACTIVE,
+  open: `${ACTIVE} AND t.status = 'open'`,
+  pending: `${ACTIVE} AND t.status = 'pending'`,
+  closed: `${ACTIVE} AND t.status = 'closed'`,
+  mine: `${ACTIVE} AND t.status != 'closed' AND t.assignee_id = :viewer`,
+  unassigned: `${ACTIVE} AND t.status != 'closed' AND t.assignee_id IS NULL`,
+  snoozed: `t.trashed_at IS NULL AND t.spam_at IS NULL AND t.snoozed_until > datetime('now')`,
+  trash: `t.trashed_at IS NOT NULL`,
+  spam: `t.trashed_at IS NULL AND t.spam_at IS NOT NULL`,
+};
+
+export interface TicketQuery {
   q?: string;
-  /** open | pending | closed; empty for all */
+  view?: InboxView;
+  /** Legacy filter (CLI): open | pending | closed */
   status?: string;
+  priority?: string;
+  /** a staff id, or "none" */
+  assignee?: string;
+  tag?: string;
+  channel?: string;
+  sort?: "newest" | "oldest";
   offset?: number;
   limit?: number;
-}) {
-  const like = `%${q.trim().toLowerCase()}%`;
-  const clauses: string[] = [];
-  const params: string[] = [];
-  if (q.trim()) {
-    clauses.push(`(lower(t.id) LIKE ? OR lower(t.subject) LIKE ? OR lower(c.first_name || ' ' || c.last_name) LIKE ?
-       OR lower(c.email) LIKE ? OR lower(coalesce(t.order_name, '')) LIKE ?)`);
-    params.push(like, like, like, like, like);
-  }
-  if (["open", "pending", "closed"].includes(status)) {
-    clauses.push(`t.status = ?`);
-    params.push(status);
-  }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const total = n(
-    getDb()
-      .prepare(`SELECT count(*) AS c FROM sim_tickets t LEFT JOIN sim_customers c ON c.id = t.customer_id ${where}`)
-      .get(...params)?.c,
-  );
-  const rows = getDb()
-    .prepare(`${TICKET_SELECT} ${where} ORDER BY t.updated_at DESC, t.seq DESC LIMIT ? OFFSET ?`)
-    .all(...params, limit, offset) as Row[];
-  return { tickets: rows.map(toSummary), total, offset, limit };
+  /** Staff id of the person looking (unread state, "mine") */
+  viewer?: number;
 }
 
-export function getSimTicketDetail(id: string): TicketDetail | null {
-  const r = getDb().prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(id) as Row | undefined;
+function whereFor(query: TicketQuery, includeView: boolean) {
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  const viewer = query.viewer ?? 0;
+  const add = (sql: string, ...values: (string | number)[]) => {
+    // :viewer is only used by the "mine" view; bind it positionally
+    const parts = sql.split(":viewer");
+    clauses.push(parts.join("?"));
+    for (let i = 1; i < parts.length; i++) params.push(viewer);
+    params.push(...values);
+  };
+  const q = query.q?.trim().toLowerCase() ?? "";
+  if (q) {
+    const like = `%${q}%`;
+    add(
+      `(lower(t.id) LIKE ? OR lower(t.subject) LIKE ? OR lower(c.first_name || ' ' || c.last_name) LIKE ?
+        OR lower(c.email) LIKE ? OR lower(coalesce(t.order_name, '')) LIKE ?)`,
+      like, like, like, like, like,
+    );
+  }
+  if (includeView) {
+    const view = query.view && query.view in VIEW_SQL ? query.view : null;
+    if (view) add(VIEW_SQL[view]);
+    else if (["open", "pending", "closed"].includes(query.status ?? "")) add(`t.status = ?`, query.status!);
+  }
+  if (query.priority && (PRIORITIES as string[]).includes(query.priority)) add(`t.priority = ?`, query.priority);
+  if (query.assignee === "none") add(`t.assignee_id IS NULL`);
+  else if (query.assignee && /^\d+$/.test(query.assignee)) add(`t.assignee_id = ?`, Number(query.assignee));
+  if (query.tag?.trim()) add(`EXISTS (SELECT 1 FROM ticket_tags g WHERE g.ticket_id = t.id AND g.tag = ?)`, query.tag.trim());
+  if (["simulator", "email", "staff"].includes(query.channel ?? "")) add(`t.channel = ?`, query.channel!);
+  return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
+}
+
+export function listSimTickets(query: TicketQuery) {
+  const offset = Math.max(0, query.offset ?? 0);
+  const limit = Math.min(Math.max(1, query.limit ?? 25), 100);
+  const d = getDb();
+  const { where, params } = whereFor(query, true);
+  const from = `FROM sim_tickets t LEFT JOIN sim_customers c ON c.id = t.customer_id`;
+  const total = n((d.prepare(`SELECT count(*) AS c ${from} ${where}`).get(...params) as Row).c);
+  const order = query.sort === "oldest" ? "ASC" : "DESC";
+  const rows = d
+    .prepare(`${TICKET_SELECT} ${where} ORDER BY t.updated_at ${order}, t.seq ${order} LIMIT ? OFFSET ?`)
+    .all(query.viewer ?? 0, ...params, limit, offset) as Row[];
+  // Per-view counts under the same search and filters
+  const base = whereFor(query, false);
+  const viewer = query.viewer ?? 0;
+  const sums = INBOX_VIEWS.map((v) => `sum(CASE WHEN ${VIEW_SQL[v].split(":viewer").join(String(Number(viewer)))} THEN 1 ELSE 0 END) AS "${v}"`);
+  const countRow = d.prepare(`SELECT ${sums.join(", ")} ${from} ${base.where}`).get(...base.params) as Row;
+  const counts = Object.fromEntries(INBOX_VIEWS.map((v) => [v, n(countRow[v])])) as Record<InboxView, number>;
+  return { tickets: rows.map(toSummary), total, offset, limit, counts };
+}
+
+export function getSimTicketDetail(id: string, viewer = 0): TicketDetail | null {
+  const r = getDb().prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(viewer, id) as Row | undefined;
   if (!r) return null;
   const customerRow = getDb()
     .prepare(`SELECT * FROM sim_customers WHERE id = ?`)
     .get(String(r.customer_id)) as Row | undefined;
   const history = getDb()
     .prepare(`${TICKET_SELECT} WHERE t.customer_id = ? AND t.id <> ? ORDER BY t.seq DESC LIMIT 25`)
-    .all(String(r.customer_id), id) as Row[];
+    .all(viewer, String(r.customer_id), id) as Row[];
   const messages = getDb()
     .prepare(`SELECT * FROM sim_messages WHERE ticket_id = ? ORDER BY id`)
+    .all(id) as Row[];
+  const attachments = getDb()
+    .prepare(`SELECT * FROM attachments WHERE ticket_id = ? ORDER BY id`)
     .all(id) as Row[];
   const all = getDb()
     .prepare(
@@ -191,6 +257,16 @@ export function getSimTicketDetail(id: string): TicketDetail | null {
         sender: s(m.sender),
         body: String(m.body ?? ""),
         createdAt: iso(m.created_at)!,
+        truncated: n(m.truncated) === 1,
+        attachments: attachments
+          .filter((a) => n(a.message_id) === n(m.id))
+          .map((a) => ({
+            id: n(a.id),
+            filename: String(a.filename),
+            contentType: String(a.content_type),
+            size: n(a.size),
+            stored: n(a.stored) === 1,
+          })),
       }),
     ),
   };
@@ -250,56 +326,98 @@ export interface SimTicketInput {
   orderId?: string | null;
   sourceTicketId?: string | null;
   runId?: string | null;
+  channel?: "simulator" | "email" | "staff";
+  assigneeId?: number | null;
+  /** Who wrote the first message (default: the customer) */
+  firstAuthor?: MessageAuthor;
+  firstSender?: string;
+  truncated?: boolean;
+  attachments?: AttachmentInput[];
+}
+
+export type MessageAuthor = "customer" | "agent" | "system" | "note";
+
+export interface AttachmentInput {
+  filename: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+  /** false: too large or a blocked type; only the metadata is kept */
+  stored: boolean;
 }
 
 export function createSimTicket(input: SimTicketInput) {
   const d = getDb();
   return transaction(d, () => {
     const customerId = upsertSimCustomer(input.customer);
+    const channel = input.channel ?? (input.tags === "email" ? "email" : "simulator");
     const res = d
       .prepare(
         `INSERT INTO sim_tickets (customer_id, subject, priority, tags, ai_intent, order_name, order_id,
-           source_ticket_id, run_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+           source_ticket_id, run_id, channel, assignee_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         customerId, input.subject, input.priority ?? "normal", input.tags ?? null, input.aiIntent ?? null,
         input.orderName ?? null, input.orderId ?? null, input.sourceTicketId ?? null, input.runId ?? null,
+        channel, input.assigneeId ?? null,
       );
     const id = `SIM-${1000 + Number(res.lastInsertRowid)}`;
     d.prepare(`UPDATE sim_tickets SET id = ? WHERE seq = ?`).run(id, Number(res.lastInsertRowid));
-    d.prepare(`INSERT INTO sim_messages (ticket_id, author, sender, body) VALUES (?, 'customer', ?, ?)`).run(
-      id,
-      `${input.customer.firstName} ${input.customer.lastName}`,
-      input.body,
-    );
+    const tags = (input.tags && input.tags !== "email" ? input.tags.split(",") : []).map((t) => t.trim().toLowerCase());
+    for (const tag of tags.filter((t) => t && t !== "auto-close")) {
+      d.prepare(`INSERT OR IGNORE INTO ticket_tags (ticket_id, tag) VALUES (?, ?)`).run(id, tag.slice(0, 40));
+    }
+    if (input.body) {
+      appendMessage(id, input.firstAuthor ?? "customer", input.body, input.firstSender ?? `${input.customer.firstName} ${input.customer.lastName}`.trim(), {
+        truncated: input.truncated,
+        attachments: input.attachments,
+      });
+    }
     return id;
   });
 }
 
-export function addSimMessage(
+/** Add a message and update the ticket's state; returns the new message id (null: no such ticket) */
+export function appendMessage(
   ticketId: string,
-  author: "customer" | "agent" | "system",
+  author: MessageAuthor,
   body: string,
   sender?: string | null,
+  opts: { truncated?: boolean; attachments?: AttachmentInput[] } = {},
 ) {
   const d = getDb();
-  const ticket = d.prepare(`SELECT * FROM sim_tickets WHERE id = ?`).get(ticketId) as Row | undefined;
-  if (!ticket) return null;
-  d.prepare(`INSERT INTO sim_messages (ticket_id, author, sender, body) VALUES (?,?,?,?)`).run(
-    ticketId, author, sender ?? null, body,
-  );
-  if (author === "agent") {
-    d.prepare(
-      `UPDATE sim_tickets SET status = 'pending', updated_at = datetime('now'),
-         first_response_at = coalesce(first_response_at, datetime('now')) WHERE id = ?`,
-    ).run(ticketId);
-  } else if (author === "customer") {
-    // A customer reply reopens the ticket
-    d.prepare(
-      `UPDATE sim_tickets SET status = 'open', closed_at = NULL, updated_at = datetime('now') WHERE id = ?`,
-    ).run(ticketId);
-  }
-  return getSimTicketDetail(ticketId);
+  return transaction(d, () => {
+    const ticket = d.prepare(`SELECT id FROM sim_tickets WHERE id = ?`).get(ticketId) as Row | undefined;
+    if (!ticket) return null;
+    const res = d
+      .prepare(`INSERT INTO sim_messages (ticket_id, author, sender, body, truncated) VALUES (?,?,?,?,?)`)
+      .run(ticketId, author, sender ?? null, body, opts.truncated ? 1 : 0);
+    const messageId = Number(res.lastInsertRowid);
+    for (const a of opts.attachments ?? []) {
+      d.prepare(
+        `INSERT INTO attachments (ticket_id, message_id, filename, content_type, size, sha256, stored) VALUES (?,?,?,?,?,?,?)`,
+      ).run(ticketId, messageId, a.filename.slice(0, 200), a.contentType.slice(0, 100), a.size, a.sha256, a.stored ? 1 : 0);
+    }
+    if (author === "agent") {
+      d.prepare(
+        `UPDATE sim_tickets SET status = 'pending', updated_at = datetime('now'),
+           first_response_at = coalesce(first_response_at, datetime('now')) WHERE id = ?`,
+      ).run(ticketId);
+    } else if (author === "customer") {
+      // A customer reply reopens the ticket and wakes it from snooze
+      d.prepare(
+        `UPDATE sim_tickets SET status = 'open', closed_at = NULL, snoozed_until = NULL, updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(ticketId);
+    } else if (author === "note") {
+      d.prepare(`UPDATE sim_tickets SET updated_at = datetime('now') WHERE id = ?`).run(ticketId);
+    }
+    return messageId;
+  });
+}
+
+export function addSimMessage(ticketId: string, author: MessageAuthor, body: string, sender?: string | null) {
+  return appendMessage(ticketId, author, body, sender) == null ? null : getSimTicketDetail(ticketId);
 }
 
 export function setSimTicketStatus(ticketId: string, status: "open" | "pending" | "closed") {
@@ -312,13 +430,15 @@ export function setSimTicketStatus(ticketId: string, status: "open" | "pending" 
   return res.changes > 0 ? getSimTicketDetail(ticketId) : null;
 }
 
-// Tickets waiting on the customer (agent replied last) — used by the simulator for follow-ups
+// Simulated tickets waiting on the customer (agent replied last) — used by the simulator for follow-ups.
+// Never real email tickets: the simulator must not answer for a real person.
 export function ticketsAwaitingCustomer(limit = 20) {
   const rows = getDb()
     .prepare(
-      `${TICKET_SELECT} WHERE t.status = 'pending' ORDER BY t.updated_at ASC LIMIT ?`,
+      `${TICKET_SELECT} WHERE t.status = 'pending' AND t.channel = 'simulator'
+         AND t.trashed_at IS NULL AND t.spam_at IS NULL ORDER BY t.updated_at ASC LIMIT ?`,
     )
-    .all(limit) as Row[];
+    .all(0, limit) as Row[];
   return rows.map((r) => getSimTicketDetail(String(r.id))!);
 }
 
@@ -358,7 +478,10 @@ export function ingestEmail(input: SimTicketInput & { messageId: string; refs: s
 
     const created = !ticketId;
     if (ticketId) {
-      addSimMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim());
+      appendMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim(), {
+        truncated: input.truncated,
+        attachments: input.attachments,
+      });
     } else {
       ticketId = createSimTicket(input);
     }
@@ -446,12 +569,12 @@ export function emailThread(ticketId: string) {
   const d = getDb();
   const r = d
     .prepare(
-      `SELECT t.subject, t.tags, c.email, c.source_key FROM sim_tickets t
+      `SELECT t.subject, t.channel, c.email, c.source_key FROM sim_tickets t
        JOIN sim_customers c ON c.id = t.customer_id WHERE t.id = ?`,
     )
     .get(ticketId) as Row | undefined;
   const to = s(r?.email);
-  if (!r || r.tags !== "email" || !isEmailCustomer(r) || !to || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to)) return null;
+  if (!r || r.channel !== "email" || !isEmailCustomer(r) || !to || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to)) return null;
   const messageIds = (d.prepare(`SELECT message_id FROM sim_email_ids WHERE ticket_id = ? ORDER BY rowid`).all(ticketId) as Row[])
     .map((m) => String(m.message_id))
     .filter((m) => m.startsWith("<"));

@@ -1,6 +1,7 @@
 "use client";
 
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/helpdesk-format";
 import type { TicketStatus } from "./types";
@@ -152,4 +153,129 @@ export async function copyText(text: string) {
 export function modKey() {
   if (typeof navigator === "undefined") return "Ctrl";
   return /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+}
+
+// A button that opens a small floating panel; closes on outside click, Escape, or close()
+export function Popover({
+  trigger,
+  children,
+  align = "left",
+  className,
+  panelClassName,
+}: {
+  trigger: (props: { open: boolean; toggle: () => void }) => React.ReactNode;
+  children: (close: () => void) => React.ReactNode;
+  align?: "left" | "right";
+  className?: string;
+  panelClassName?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div className={cn("relative", className)} ref={ref}>
+      {trigger({ open, toggle: () => setOpen((o) => !o) })}
+      {open && (
+        <div
+          className={cn(
+            "absolute top-full z-50 mt-1.5 min-w-52 rounded-xl border border-border bg-popover p-1 shadow-pop animate-in fade-in zoom-in-95 duration-100",
+            align === "right" ? "right-0 origin-top-right" : "left-0 origin-top-left",
+            panelClassName,
+          )}
+        >
+          {children(() => setOpen(false))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function MenuItem({
+  icon: Icon,
+  label,
+  hint,
+  checked,
+  danger,
+  disabled,
+  onSelect,
+  right,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  label: React.ReactNode;
+  hint?: React.ReactNode;
+  checked?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+  right?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-accent disabled:pointer-events-none disabled:opacity-40",
+        danger ? "text-destructive" : "text-popover-foreground",
+      )}
+    >
+      {Icon && <Icon className="mt-0.5 size-4 shrink-0 opacity-80" />}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
+      </span>
+      {right}
+      {checked && <Check className="mt-0.5 size-4 shrink-0 text-primary" />}
+    </button>
+  );
+}
+
+export const MenuDivider = () => <div className="my-1 h-px bg-border" role="separator" />;
+
+export const MenuLabel = ({ children }: { children: React.ReactNode }) => (
+  <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</div>
+);
+
+export const PRIORITY_META: Record<string, { label: string; tone: string }> = {
+  critical: { label: "Critical", tone: "text-destructive" },
+  high: { label: "High", tone: "text-warning" },
+  normal: { label: "Normal", tone: "text-muted-foreground" },
+  low: { label: "Low", tone: "text-muted-foreground/70" },
+};
+
+/** Snooze presets: later today, tomorrow 9:00, next Monday 9:00, in a week */
+export function snoozeOptions(now = new Date()) {
+  const at = (d: Date, h: number) => {
+    const x = new Date(d);
+    x.setHours(h, 0, 0, 0);
+    return x;
+  };
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + (((8 - now.getDay()) % 7) || 7));
+  const week = new Date(now);
+  week.setDate(now.getDate() + 7);
+  const options: Array<{ label: string; until: Date }> = [];
+  if (now.getHours() < 15) options.push({ label: "Later today (3 hours)", until: new Date(now.getTime() + 3 * 3600e3) });
+  options.push({ label: "Tomorrow morning", until: at(tomorrow, 9) });
+  options.push({ label: "Next Monday", until: at(monday, 9) });
+  options.push({ label: "In a week", until: at(week, 9) });
+  return options;
 }

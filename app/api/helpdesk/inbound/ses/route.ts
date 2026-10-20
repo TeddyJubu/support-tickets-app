@@ -2,6 +2,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import PostalMime from "postal-mime";
 import { ingestEmail } from "@/lib/sim-db";
 import { getInboundEmail } from "@/lib/aws-email";
+import { MAX_ATTACHMENTS, saveAttachment } from "@/lib/attachments";
+
+const MAX_BODY = 20000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,13 +67,24 @@ export async function POST(request: Request) {
   const [firstName, ...rest] = (mail.from?.name || from.split("@")[0]).trim().split(/\s+/);
   const text =
     mail.text || mail.html?.replace(/<style[\s\S]*?<\/style>|<[^>]+>/gi, " ").replace(/[ \t]+/g, " ") || "";
-  const attachments = mail.attachments.map((a) => a.filename).filter(Boolean);
-  const body = (stripQuoted(text) || text.trim()).slice(0, 20000) || "(empty message)";
+  // Files are stored content-addressed before the database write, so an SNS retry is harmless
+  const attachments = mail.attachments.slice(0, MAX_ATTACHMENTS).map((a) =>
+    saveAttachment(
+      typeof a.content === "string" ? Buffer.from(a.content) : new Uint8Array(a.content),
+      a.filename || "attachment",
+      a.mimeType,
+    ),
+  );
+  const fullBody = stripQuoted(text) || text.trim();
+  const body = fullBody.slice(0, MAX_BODY) || "(empty message)";
 
   const result = ingestEmail({
     customer: { sourceKey: `email:${createHash("sha256").update(from).digest("hex")}`, firstName, lastName: rest.join(" "), email: from },
     subject: (mail.subject || "(no subject)").slice(0, 300),
-    body: attachments.length ? `${body}\n\n[Attachments not imported: ${attachments.join(", ")}]` : body,
+    body,
+    truncated: fullBody.length > MAX_BODY,
+    attachments,
+    channel: "email",
     tags: "email",
     sourceTicketId: mail.messageId ?? null,
     messageId: mail.messageId ?? `ses:${msg.mail?.messageId}`,

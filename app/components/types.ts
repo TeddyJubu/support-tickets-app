@@ -1,4 +1,5 @@
-import type { TicketDetail, TicketSummary } from "@/lib/helpdesk-types";
+import type { Attachment, InboxView, TicketDetail, TicketSummary } from "@/lib/helpdesk-types";
+import type { ListFilters } from "./context/dashboard-context";
 
 // ============================================
 // DASHBOARD STATE TYPES
@@ -38,7 +39,8 @@ export interface CustomerContext {
 // Message types for the conversation
 export interface TicketMessage {
   id: number;
-  type: "system" | "customer" | "agent";
+  /** note: internal staff note, never sent */
+  type: "system" | "customer" | "agent" | "note";
   content: string;
   timestamp: string;
   /** Raw timestamp, for day dividers */
@@ -51,6 +53,9 @@ export interface TicketMessage {
   emailSubject?: string;
   // User status
   isOnline?: boolean;
+  /** The original was cut when it arrived */
+  truncated?: boolean;
+  attachments?: Attachment[];
 }
 
 // Ticket status
@@ -81,8 +86,26 @@ export interface DashboardContextType extends DashboardState {
   // Ticket list: simulator tickets or the historical export
   ticketSource: "sim" | "history";
   setTicketSource: (source: "sim" | "history") => void;
-  statusFilter: "all" | "open" | "pending" | "closed";
-  setStatusFilter: (filter: "all" | "open" | "pending" | "closed") => void;
+  // Inbox view, filters and paging
+  view: InboxView;
+  setView: (view: InboxView) => void;
+  viewCounts: Partial<Record<InboxView, number>>;
+  filters: ListFilters;
+  /** Merge into the filters; null clears them */
+  setFilters: (filters: Partial<ListFilters> | null) => void;
+  /** Zero-based */
+  page: number;
+  setPage: (page: number) => void;
+  hasNextPage: boolean;
+  // Bulk selection
+  bulkSelection: Set<string>;
+  toggleBulk: (id: string) => void;
+  setBulkAll: (all: boolean) => void;
+  applyBulk: (changes: Record<string, unknown>, label: string) => Promise<boolean>;
+  // Triage of one ticket (defaults to the open one)
+  updateTicket: (changes: Record<string, unknown>, ticketId?: string, success?: string) => Promise<boolean>;
+  createTicket: (input: { email: string; name: string; subject: string; note: string }) => Promise<string | null>;
+  addNote: (content: string) => Promise<boolean>;
   // Right-hand panel; null when collapsed
   sidePanel: "copilot" | "customer" | null;
   setSidePanel: (panel: "copilot" | "customer" | null) => void;
@@ -100,7 +123,6 @@ export interface DashboardContextType extends DashboardState {
   ticketsError: string | null;
   retryTickets: () => void;
   setTicketQuery: (query: string) => void;
-  loadMoreTickets: () => void;
   // Selected ticket
   selectedTicketId: string | null;
   ticketDetail: TicketDetail | null;

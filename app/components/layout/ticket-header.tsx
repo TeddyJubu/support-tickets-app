@@ -25,6 +25,7 @@ import { formatDate, formatIntent } from "@/lib/helpdesk-format";
 import { useDashboard } from "../context/dashboard-context";
 import { IconButton, Kbd, Skeleton, StatusBadge, STATUS_META, copyText } from "../ui";
 import type { TicketStatus } from "../types";
+import { EditableSubject, TriageBar } from "./triage-bar";
 
 function StatusMenu({ disabled }: { disabled: boolean }) {
   const { ticketStatus, setTicketStatus, selectedTicketId } = useDashboard();
@@ -196,9 +197,7 @@ export function TicketHeader() {
           {ticket ? (
             <>
               <div className="flex min-w-0 items-center gap-2">
-                <h2 className="truncate text-[15px] font-semibold tracking-tight text-foreground">
-                  {ticket.subject ?? "(no subject)"}
-                </h2>
+                <EditableSubject key={ticket.id} ticket={ticket} editable={editable} />
                 {sentiment && (
                   <span className="text-base leading-none" title={`Sentiment: ${sentiment.label} (${sentiment.score}/100)`}>
                     {sentiment.emoji}
@@ -218,12 +217,12 @@ export function TicketHeader() {
                   {ticket.id}
                   <Copy className="size-3 opacity-0 transition-opacity group-hover:opacity-100" />
                 </button>
-                {ticket.simulated && ticket.tags !== "email" && (
+                {ticket.channel === "simulator" && (
                   <span className="shrink-0 rounded bg-chart-5/12 px-1.5 py-px text-[10px] font-semibold text-chart-5">
                     SIMULATED
                   </span>
                 )}
-                {ticket.tags === "email" && (
+                {ticket.channel === "email" && (
                   <span className="shrink-0 rounded bg-info/12 px-1.5 py-px text-[10px] font-semibold text-info">
                     REAL EMAIL
                   </span>
@@ -309,6 +308,8 @@ export function TicketHeader() {
           </div>
         </div>
       </div>
+
+      {ticket && editable && <TriageBar ticket={ticket} />}
 
       {hasActions && (
         <div className="flex flex-wrap items-center gap-2 px-4 pb-2.5">

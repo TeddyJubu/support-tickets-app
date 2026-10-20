@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import {
   Search,
@@ -16,12 +16,14 @@ import {
   RefreshCw,
   SearchX,
   LogOut,
+  AlarmClock,
 } from "lucide-react";
 import { formatRelative } from "@/lib/helpdesk-format";
 import type { TicketSummary } from "@/lib/helpdesk-types";
-import { useDashboard, type StatusFilter } from "../context/dashboard-context";
+import { useDashboard } from "../context/dashboard-context";
 import { useSession } from "../context/session-context";
 import { Avatar, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
+import { BulkBar, FilterMenu, NewTicketButton, Pager, VIEW_META, ViewPicker } from "./inbox-controls";
 import type { TicketStatus } from "../types";
 
 // A little four-hole button, for Buttons Bebe
@@ -43,13 +45,6 @@ export function ticketStatusOf(ticket: Pick<TicketSummary, "status" | "closedAt"
   if (ticket.closedAt || ticket.status === "closed") return "closed";
   return ticket.status === "pending" ? "pending" : "open";
 }
-
-const FILTERS: Array<[StatusFilter, string]> = [
-  ["all", "All"],
-  ["open", "Needs reply"],
-  ["pending", "Waiting"],
-  ["closed", "Closed"],
-];
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -91,19 +86,33 @@ function TicketRow({
   ticket,
   selected,
   onSelect,
+  checked,
+  onCheck,
+  selecting,
 }: {
   ticket: TicketSummary;
   selected: boolean;
   onSelect: () => void;
+  /** Bulk selection (inbox only) */
+  checked?: boolean;
+  onCheck?: () => void;
+  selecting?: boolean;
 }) {
   const status = ticketStatusOf(ticket);
-  const needsReply = ticket.simulated && status === "open";
+  const needsReply = ticket.simulated && (ticket.unread || status === "open");
   const urgent = ticket.priority === "critical" || ticket.priority === "high";
   const name = ticket.customerName ?? ticket.customerEmail ?? "Unknown customer";
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       aria-current={selected ? "true" : undefined}
       data-ticket-id={ticket.id}
       className={cn(
@@ -116,7 +125,25 @@ function TicketRow({
       {selected && (
         <span className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-primary" aria-hidden />
       )}
-      <Avatar name={name} size="sm" className="mt-0.5" />
+      {onCheck ? (
+        <span className="relative mt-0.5 size-7 shrink-0">
+          <Avatar name={name} size="sm" className={cn("absolute inset-0 transition-opacity", (selecting || checked) && "opacity-0", "group-hover:opacity-0")} />
+          <input
+            type="checkbox"
+            checked={!!checked}
+            onChange={onCheck}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Select ${ticket.id}`}
+            className={cn(
+              "absolute inset-1.5 size-4 cursor-pointer accent-primary transition-opacity",
+              selecting || checked ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            )}
+          />
+        </span>
+      ) : (
+        <Avatar name={name} size="sm" className="mt-0.5" />
+      )}
+      {ticket.unread && <span className="absolute left-1 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary" title="Unread" />}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span
@@ -160,15 +187,30 @@ function TicketRow({
               <span className="capitalize">{ticket.priority}</span>
             </span>
           )}
-          {ticket.tags === "email" && (
+          {ticket.channel === "email" && (
             <span className="rounded bg-info/12 px-1 py-px text-[10px] font-medium text-info">
               Email
             </span>
           )}
-          <span className="ml-auto font-mono text-[10px] opacity-70">{ticket.id}</span>
+          {ticket.snoozedUntil && (
+            <span className="inline-flex items-center gap-0.5" title={`Snoozed until ${new Date(ticket.snoozedUntil).toLocaleString()}`}>
+              <AlarmClock className="size-3" />
+            </span>
+          )}
+          {ticket.tagList?.slice(0, 2).map((tag) => (
+            <span key={tag} className="max-w-16 truncate rounded bg-muted px-1 py-px text-[10px]">
+              {tag}
+            </span>
+          ))}
+          {ticket.assignee && (
+            <span title={`Assigned to ${ticket.assignee.displayName}`} className="ml-auto">
+              <Avatar name={ticket.assignee.displayName} size="sm" className="!size-4 !text-[8px]" />
+            </span>
+          )}
+          <span className={cn("font-mono text-[10px] opacity-70", !ticket.assignee && "ml-auto")}>{ticket.id}</span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -201,26 +243,20 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
     ticketsError,
     retryTickets,
     setTicketQuery,
-    loadMoreTickets,
     selectedTicketId,
     selectTicket,
     ticketSource,
     setTicketSource,
-    statusFilter,
-    setStatusFilter,
+    view,
+    setView,
+    filters,
+    setFilters,
+    bulkSelection,
+    toggleBulk,
+    setBulkAll,
   } = useDashboard();
-
-  // Load the next page when the end of the list scrolls into view
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) loadMoreTickets();
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [loadMoreTickets]);
+  const inbox = ticketSource === "sim";
+  const filtered = !!(filters.priority || filters.assignee || filters.tag || filters.channel);
 
   // Keep the selected ticket in view when moving with J/K
   useEffect(() => {
@@ -280,8 +316,8 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
       </div>
 
       {/* Search */}
-      <div className="px-3 pt-3">
-        <label className="group flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm text-muted-foreground transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20">
+      <div className="flex items-center gap-2 px-3 pt-3">
+        <label className="group flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm text-muted-foreground transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20">
           <Search className="size-4 shrink-0" />
           <input
             id="ticket-search"
@@ -312,36 +348,33 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
             <Kbd className="group-focus-within:hidden">/</Kbd>
           )}
         </label>
+        {inbox && <NewTicketButton />}
       </div>
 
-      {/* Status filter (inbox only) */}
-      {ticketSource === "sim" && (
-        <div className="flex gap-1 overflow-x-auto px-3 pt-2.5" role="radiogroup" aria-label="Filter by status">
-          {FILTERS.map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={statusFilter === value}
-              onClick={() => value !== statusFilter && setStatusFilter(value)}
-              className={cn(
-                "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-                statusFilter === value
-                  ? "bg-primary text-primary-foreground shadow-soft"
-                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
+      {/* View and filters (inbox only) */}
+      {inbox ? (
+        <div className="flex items-center gap-1 px-2 pt-2">
+          <input
+            type="checkbox"
+            aria-label="Select all on this page"
+            title="Select all on this page"
+            checked={tickets.length > 0 && tickets.every((t) => bulkSelection.has(t.id))}
+            onChange={(e) => setBulkAll(e.target.checked)}
+            className="ml-1.5 mr-0.5 size-4 shrink-0 cursor-pointer accent-primary"
+          />
+          <ViewPicker />
+          <FilterMenu />
+        </div>
+      ) : (
+        <div className="flex items-center justify-between px-4 pb-1.5 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <span>{ticketQuery ? "Results" : "Tickets"}</span>
+          <span className="tabular-nums normal-case tracking-normal">
+            {ticketsLoading && tickets.length === 0 ? "…" : ticketTotal.toLocaleString()}
+          </span>
         </div>
       )}
-
-      <div className="flex items-center justify-between px-4 pb-1.5 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        <span>{ticketQuery ? "Results" : "Tickets"}</span>
-        <span className="tabular-nums normal-case tracking-normal">
-          {ticketsLoading && tickets.length === 0 ? "…" : ticketTotal.toLocaleString()}
-        </span>
+      <div className="pt-1">
+        <BulkBar />
       </div>
 
       {/* List */}
@@ -354,16 +387,13 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
                 ticket={ticket}
                 selected={ticket.id === selectedTicketId}
                 onSelect={() => selectTicket(ticket.id)}
+                {...(inbox
+                  ? { checked: bulkSelection.has(ticket.id), onCheck: () => toggleBulk(ticket.id), selecting: bulkSelection.size > 0 }
+                  : {})}
               />
             </li>
           ))}
         </ul>
-        {tickets.length > 0 && tickets.length < ticketTotal && (
-          <div ref={sentinelRef} className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" />
-            Loading more…
-          </div>
-        )}
         {ticketsError && (
           <div className="m-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs">
             <p className="font-medium text-destructive">Couldn&apos;t load tickets</p>
@@ -384,10 +414,10 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
               {ticketQuery ? <SearchX className="size-5" /> : <Inbox className="size-5" />}
             </div>
             <p className="mt-3 text-sm font-medium text-sidebar-foreground">
-              {ticketQuery
+              {ticketQuery || filtered
                 ? "No matching tickets"
-                : statusFilter !== "all"
-                  ? "Nothing here"
+                : inbox && view !== "all"
+                  ? `Nothing in ${VIEW_META[view].label}`
                   : "No tickets yet"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -398,14 +428,20 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
                     Clear search
                   </button>
                 </>
-              ) : statusFilter !== "all" ? (
+              ) : filtered ? (
                 <>
-                  No tickets with this status.{" "}
-                  <button type="button" onClick={() => setStatusFilter("all")} className="font-medium text-primary hover:underline">
-                    Show all
+                  No tickets match these filters.{" "}
+                  <button type="button" onClick={() => setFilters(null)} className="font-medium text-primary hover:underline">
+                    Clear filters
                   </button>
                 </>
-              ) : ticketSource === "sim" ? (
+              ) : inbox && view !== "all" ? (
+                <>
+                  <button type="button" onClick={() => setView("all")} className="font-medium text-primary hover:underline">
+                    Show all tickets
+                  </button>
+                </>
+              ) : inbox ? (
                 <>
                   Run <code className="rounded bg-muted px-1 font-mono">npm run simulate</code> to create some.
                 </>
@@ -416,6 +452,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
           </div>
         )}
       </nav>
+      <Pager />
 
       {/* Footer */}
       <SignedInAs />

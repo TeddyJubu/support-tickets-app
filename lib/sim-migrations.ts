@@ -107,4 +107,62 @@ export const SIM_MIGRATIONS: Migration[] = [
         CREATE INDEX audit_log_ticket ON audit_log(ticket_id, id);
       `),
   },
+  {
+    version: 3,
+    name: "triage: channel, assignee, snooze, trash, spam, tags, read state, notes, attachments",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE sim_tickets ADD COLUMN channel TEXT NOT NULL DEFAULT 'simulator'; -- simulator | email | staff
+        ALTER TABLE sim_tickets ADD COLUMN assignee_id INTEGER REFERENCES staff_users(id);
+        ALTER TABLE sim_tickets ADD COLUMN snoozed_until TEXT;
+        ALTER TABLE sim_tickets ADD COLUMN trashed_at TEXT;
+        ALTER TABLE sim_tickets ADD COLUMN spam_at TEXT;
+        UPDATE sim_tickets SET channel = 'email' WHERE tags = 'email';
+        CREATE INDEX sim_tickets_status ON sim_tickets(status, updated_at);
+        CREATE INDEX sim_tickets_assignee ON sim_tickets(assignee_id);
+
+        CREATE TABLE ticket_tags (
+          ticket_id TEXT NOT NULL REFERENCES sim_tickets(id),
+          tag TEXT NOT NULL COLLATE NOCASE,
+          PRIMARY KEY (ticket_id, tag)
+        );
+        CREATE INDEX ticket_tags_tag ON ticket_tags(tag);
+
+        -- Per staff member: when they last read the ticket (unread = a newer customer message)
+        CREATE TABLE ticket_reads (
+          ticket_id TEXT NOT NULL REFERENCES sim_tickets(id),
+          user_id INTEGER NOT NULL REFERENCES staff_users(id),
+          read_at TEXT NOT NULL,
+          PRIMARY KEY (ticket_id, user_id)
+        );
+
+        -- author 'note': internal staff note, never sent to the customer
+        ALTER TABLE sim_messages ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0;
+
+        CREATE TABLE attachments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ticket_id TEXT NOT NULL REFERENCES sim_tickets(id),
+          message_id INTEGER REFERENCES sim_messages(id),
+          filename TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          sha256 TEXT NOT NULL,
+          stored INTEGER NOT NULL DEFAULT 1,       -- 0: too large or not allowed, metadata only
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX attachments_message ON attachments(message_id);
+      `);
+      // Source tags from replayed tickets ("a, b, c") become rows; "email" was a channel marker
+      const rows = db.prepare(`SELECT id, tags FROM sim_tickets WHERE tags IS NOT NULL AND tags != 'email'`).all() as Array<{
+        id: string;
+        tags: string;
+      }>;
+      const insert = db.prepare(`INSERT OR IGNORE INTO ticket_tags (ticket_id, tag) VALUES (?, ?)`);
+      for (const r of rows) {
+        for (const tag of r.tags.split(",").map((t) => t.trim().toLowerCase()).filter((t) => t && t !== "auto-close")) {
+          insert.run(r.id, tag.slice(0, 40));
+        }
+      }
+    },
+  },
 ];

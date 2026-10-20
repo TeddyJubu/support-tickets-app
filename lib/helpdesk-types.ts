@@ -19,6 +19,31 @@ export interface TicketSummary {
   status?: string | null;
   /** Simulated tickets only: last activity */
   updatedAt?: string | null;
+  /** How the ticket arrived. Inbox: simulator | email | staff (TicketChannel); archive: Gorgias channel */
+  channel?: string | null;
+  assignee?: { id: number; displayName: string } | null;
+  snoozedUntil?: string | null;
+  trashed?: boolean;
+  spam?: boolean;
+  tagList?: string[];
+  /** A customer message the viewer hasn't opened yet */
+  unread?: boolean;
+}
+
+export type TicketChannel = "simulator" | "email" | "staff";
+export type TicketPriority = "low" | "normal" | "high" | "critical";
+export const PRIORITIES: TicketPriority[] = ["low", "normal", "high", "critical"];
+
+export type InboxView = "all" | "open" | "pending" | "closed" | "mine" | "unassigned" | "snoozed" | "trash" | "spam";
+export const INBOX_VIEWS: InboxView[] = ["all", "open", "pending", "mine", "unassigned", "snoozed", "closed", "trash", "spam"];
+
+export interface Attachment {
+  id: number;
+  filename: string;
+  contentType: string;
+  size: number;
+  /** false: not stored (too large or a blocked type), metadata only */
+  stored: boolean;
 }
 
 export interface Ticket extends TicketSummary {
@@ -44,10 +69,14 @@ export interface Ticket extends TicketSummary {
 
 export interface SimMessage {
   id: number;
-  author: "customer" | "agent" | "system";
+  /** note: internal staff note, never sent */
+  author: "customer" | "agent" | "system" | "note";
   sender: string | null;
   body: string;
   createdAt: string;
+  /** The original was longer and was cut when it arrived */
+  truncated?: boolean;
+  attachments?: Attachment[];
 }
 
 export interface Customer {
@@ -121,4 +150,6 @@ export interface TicketListResponse {
   total: number;
   offset: number;
   limit: number;
+  /** Inbox only: ticket count per view */
+  counts?: Record<InboxView, number>;
 }

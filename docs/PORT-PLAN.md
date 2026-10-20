@@ -52,13 +52,13 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 2 — Inbox triage
 
-- [ ] **2.1 Ticket fields (S).** Migration: `assignee`, `snoozed_until`, `read_at`, `trashed_at`, `spam`, `tags` (normalized table). Priority stays `low | normal | high | critical`.
-- [ ] **2.2 Views (M).** All, Open, Pending, Assigned to me, Unassigned, Snoozed, Closed, Trash, Spam, with counts. Server-side queries in `/api/helpdesk/tickets`.
-- [ ] **2.3 Filters, sort, paging (M).** Priority, assignee, tag, channel (sim/email); newest/oldest; 25 per page with page controls.
-- [ ] **2.4 Ticket actions (M).** Set priority, assignee, tags; snooze (until a time, auto-wakes); mark read/unread; trash/restore; spam. Each writes an audit row.
-- [ ] **2.5 Bulk actions (S).** Select page → status, priority, assignee, read state, snooze.
-- [ ] **2.6 New ticket (S).** Staff create a ticket for a customer email (real, stored in `sim.db`), optionally sending the first email.
-- [ ] **2.7 Thread detail (M).** Older-message paging, quoted-history collapse, image attachments from inbound email (store attachment files under `data/attachments/`, served only to signed-in staff), truncation notice.
+- [x] **2.1 Ticket fields (S).** Migration: `assignee`, `snoozed_until`, `read_at`, `trashed_at`, `spam`, `tags` (normalized table). Priority stays `low | normal | high | critical`.
+- [x] **2.2 Views (M).** All, Open, Pending, Assigned to me, Unassigned, Snoozed, Closed, Trash, Spam, with counts. Server-side queries in `/api/helpdesk/tickets`.
+- [x] **2.3 Filters, sort, paging (M).** Priority, assignee, tag, channel (sim/email); newest/oldest; 25 per page with page controls.
+- [x] **2.4 Ticket actions (M).** Set priority, assignee, tags; snooze (until a time, auto-wakes); mark read/unread; trash/restore; spam. Each writes an audit row.
+- [x] **2.5 Bulk actions (S).** Select page → status, priority, assignee, read state, snooze.
+- [x] **2.6 New ticket (S).** Staff create a ticket for a customer email (real, stored in `sim.db`), optionally sending the first email.
+- [x] **2.7 Thread detail (M).** Older-message paging, quoted-history collapse, image attachments from inbound email (store attachment files under `data/attachments/`, served only to signed-in staff), truncation notice.
 
 ### Phase 3 — Knowledge base
 

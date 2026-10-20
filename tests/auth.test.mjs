@@ -116,9 +116,9 @@ const run = (path, { method = "GET", headers = {} } = {}) =>
 test("pages redirect to /login, APIs answer 401, without a session", () => {
   const page = run("/");
   assert.equal(page.status, 307);
-  assert.equal(page.headers.get("location"), "/login");
+  assert.equal(page.headers.get("location"), "http://helpdesk.test/login");
   const deep = run("/kb?x=1");
-  assert.equal(deep.headers.get("location"), "/login?next=%2Fkb%3Fx%3D1");
+  assert.equal(new URL(deep.headers.get("location")).searchParams.get("next"), "/kb?x=1");
   assert.equal(run("/api/helpdesk/tickets").status, 401);
   assert.equal(run("/api/chat", { method: "POST" }).status, 401);
 });
@@ -146,4 +146,13 @@ test("the simulator key opens /api/helpdesk only", () => {
   assert.equal(run("/api/chat", { method: "POST", headers: bearer }).status, 401);
   assert.equal(run("/", { headers: bearer }).status, 307);
   assert.equal(run("/api/helpdesk/tickets", { headers: { authorization: "Bearer wrong" } }).status, 401);
+});
+
+test("behind Caddy the login redirect uses the public host and https", () => {
+  const r = proxy(
+    new NextRequest(new URL("/kb", "http://localhost:3100"), {
+      headers: { host: "helpdesk.teddyonfriday.com", "x-forwarded-proto": "https" },
+    }),
+  );
+  assert.equal(new URL(r.headers.get("location")).origin, "https://helpdesk.teddyonfriday.com");
 });

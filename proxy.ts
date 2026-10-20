@@ -38,9 +38,12 @@ export function proxy(request: NextRequest) {
   }
 
   if (path.startsWith("/api/")) return NextResponse.json({ error: "Sign in required" }, { status: 401 });
-  // A relative Location: behind Caddy the server only knows itself as localhost
-  const next = path === "/" ? "" : `?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`;
-  return new NextResponse(null, { status: 307, headers: { location: `/login${next}` } });
+  // Behind Caddy the server only knows itself as localhost: build the URL from the Host the
+  // browser used (Caddy passes it through) and the original scheme
+  const proto = request.headers.get("x-forwarded-proto") === "https" ? "https" : request.nextUrl.protocol.replace(":", "");
+  const login = new URL(`${proto}://${request.headers.get("host") ?? request.nextUrl.host}/login`);
+  if (path !== "/") login.searchParams.set("next", `${path}${request.nextUrl.search}`);
+  return NextResponse.redirect(login);
 }
 
 export const config = {
