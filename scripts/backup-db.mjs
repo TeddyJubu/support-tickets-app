@@ -9,7 +9,8 @@
 // Each DB is copied online with VACUUM INTO (a consistent snapshot while the app is
 // writing; never cp a WAL database), integrity-checked, gzipped to
 // data/backups/<db>-<UTC time>.db.gz (mode 600) and uploaded to an S3-compatible
-// bucket (Cloudflare R2 or AWS S3) when BACKUP_S3_URL is set. Local copies older
+// bucket (Cloudflare R2 or AWS S3); until all three BACKUP_S3_ keys below are set,
+// the upload is skipped (not a failure). Local copies older
 // than --keep-days (default 14) are deleted, but the newest copy of each DB is always
 // kept. The bucket expires old copies with its own lifecycle rule.
 //
@@ -85,10 +86,10 @@ function check(path) {
   }
 }
 
+// { missing } until the bucket URL and both keys are set
 function bucket() {
-  if (!env.BACKUP_S3_URL) return null;
-  const missing = ["BACKUP_S3_ACCESS_KEY_ID", "BACKUP_S3_SECRET_ACCESS_KEY"].filter((k) => !env[k]);
-  if (missing.length) throw new Error(`BACKUP_S3_URL is set but ${missing.join(", ")} missing`);
+  const missing = ["BACKUP_S3_URL", "BACKUP_S3_ACCESS_KEY_ID", "BACKUP_S3_SECRET_ACCESS_KEY"].filter((k) => !env[k]);
+  if (missing.length) return { missing };
   const client = new AwsClient({
     accessKeyId: env.BACKUP_S3_ACCESS_KEY_ID,
     secretAccessKey: env.BACKUP_S3_SECRET_ACCESS_KEY,
@@ -134,13 +135,13 @@ async function backup() {
     }
   }
 
-  let uploaded = false;
-  let uploadFailed = false;
-  if (!argv.includes("--no-upload")) {
+  let upload = "skipped";
+  const remote = argv.includes("--no-upload") ? null : bucket();
+  if (remote?.missing) {
+    console.warn(`upload skipped: ${remote.missing.join(", ")} not set, so the backups stay on this machine only`);
+  } else if (remote && made.length) {
     try {
-      const remote = bucket();
-      if (!remote) console.warn("warning: BACKUP_S3_URL isn't set, so the backups stay on this machine only");
-      for (const { file, gz } of remote ? made : []) {
+      for (const { file, gz } of made) {
         const res = await remote.fetch(file, {
           method: "PUT",
           body: gz,
@@ -154,21 +155,21 @@ async function backup() {
         if (!res.ok) throw new Error(`${remote.key(file)}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
         console.log(`uploaded ${remote.key(file)}`);
       }
-      uploaded = Boolean(remote) && made.length > 0;
+      upload = "done";
     } catch (err) {
-      uploadFailed = true;
+      upload = "failed";
       const cause = err?.cause?.code ?? err?.cause?.message;
       console.error(`upload failed: ${err instanceof Error ? err.message : err}${cause ? ` (${cause})` : ""}`);
     }
   }
   writeFileSync(
     join(backupDir, "last-run.json"),
-    JSON.stringify({ at: new Date().toISOString(), files: made.map((m) => m.file), uploaded }, null, 2),
+    JSON.stringify({ at: new Date().toISOString(), files: made.map((m) => m.file), upload }, null, 2),
     { mode: 0o600 },
   );
 
   prune();
-  if (failed || uploadFailed) process.exit(1);
+  if (failed || upload === "failed") process.exit(1);
 }
 
 // Delete local copies older than keepDays, always keeping each DB's newest
@@ -209,7 +210,7 @@ function verify(file) {
 async function download(file) {
   if (!file || !BACKUP_NAME.test(file)) throw new Error("Usage: npm run backup -- download <db>-<time>.db.gz");
   const remote = bucket();
-  if (!remote) throw new Error("BACKUP_S3_URL isn't set in .env.local");
+  if (remote.missing) throw new Error(`${remote.missing.join(", ")} not set in .env.local`);
   const res = await remote.fetch(file);
   if (!res.ok) throw new Error(`download of ${remote.key(file)} failed: HTTP ${res.status}`);
   mkdirSync(backupDir, { recursive: true, mode: 0o700 });

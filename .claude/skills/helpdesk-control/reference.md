@@ -75,7 +75,7 @@ The production server reads `.env.local` at startup: restart after changing it.
 
 ## Backups and restore
 
-`scripts/backup-db.mjs` (`npm run backup`) backs up `data/sim.db` (real inbound customer emails, agent replies, the email outbox) and `data/helpdesk.db` (the seeded export). Each DB is copied online with `VACUUM INTO`, which gives a consistent snapshot while the app writes. Never `cp` these files: they use WAL, so a plain copy can miss committed data or be corrupt. The copy is integrity-checked, gzipped to `data/backups/<db>-<UTC time>.db.gz` (mode 600) and uploaded to the bucket in `BACKUP_S3_URL` with signed checksums. Local copies older than 14 days are deleted (`--keep-days N`), always keeping each DB's newest copy; the bucket expires old copies with its own lifecycle rule. `data/backups/last-run.json` records the last run, and `npm run helpdesk -- status` shows its age and whether it was uploaded. A failed DB or upload makes the run exit 1 (the timer shows as failed).
+`scripts/backup-db.mjs` (`npm run backup`) backs up `data/sim.db` (real inbound customer emails, agent replies, the email outbox) and `data/helpdesk.db` (the seeded export). Each DB is copied online with `VACUUM INTO`, which gives a consistent snapshot while the app writes. Never `cp` these files: they use WAL, so a plain copy can miss committed data or be corrupt. The copy is integrity-checked, gzipped to `data/backups/<db>-<UTC time>.db.gz` (mode 600) and uploaded to the bucket in `BACKUP_S3_URL` with signed checksums (until all three `BACKUP_S3_` keys are set, the upload is skipped, not failed). Local copies older than 14 days are deleted (`--keep-days N`), always keeping each DB's newest copy; the bucket expires old copies with its own lifecycle rule. `data/backups/last-run.json` records the last run, and `npm run helpdesk -- status` shows its age and whether the upload was done, skipped or failed. A failed DB or upload makes the run exit 1 (the timer shows as failed).
 
 | Goal | Command |
 |---|---|
@@ -111,5 +111,5 @@ Email that arrived after the backup isn't in the restored DB. SES also writes ea
 | sign-in says "Too many attempts" | 10 failures from one IP in 15 minutes; wait, or restart the service to clear it |
 | everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |
 | UI doesn't show new SIM tickets | the Simulated tab polls every 10 s; confirm with `npm run helpdesk -- tickets` |
-| `status` shows the backup as old or `NOT uploaded` | `journalctl -u helpdesk-backup -n 50`; `grep -c '^BACKUP_S3_' .env.local` should be 3 or more; run `npm run backup` by hand to see the error |
+| `status` shows the backup as old, `upload FAILED` or `upload skipped` | `journalctl -u helpdesk-backup -n 50`; `grep -c '^BACKUP_S3_' .env.local` should be 3 or more; run `npm run backup` by hand to see the error |
 | site down after a reboot | `systemctl status svvi-caddy support-tickets`; both are enabled and should start at boot |

@@ -113,7 +113,7 @@ const commands = {
       simulatedTickets: { total: sim.total, ...byStatus },
       historicalTickets: hist.total,
       model: env.CF_MODEL || "@cf/zai-org/glm-5.3-flash",
-      backup: backup && { at: backup.at, uploaded: backup.uploaded },
+      backup: backup && { at: backup.at, upload: backup.upload },
     };
     out(data, () =>
       [
@@ -123,7 +123,7 @@ const commands = {
         `simulated    ${sim.total} tickets (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ") || "none"})`,
         `history      ${hist.total} tickets`,
         `model        ${data.model}`,
-        `backup       ${backup ? `${backupAge < 48 ? `${backupAge}h` : `${Math.round(backupAge / 24)}d`} ago, ${backup.uploaded ? "uploaded" : "NOT uploaded"}` : "none yet (npm run backup)"}`,
+        `backup       ${backup ? `${backupAge < 48 ? `${backupAge}h` : `${Math.round(backupAge / 24)}d`} ago, ${{ done: "uploaded", skipped: "upload skipped (no bucket keys)" }[backup.upload] ?? "upload FAILED"}` : "none yet (npm run backup)"}`,
       ].join("\n"),
     );
   },
