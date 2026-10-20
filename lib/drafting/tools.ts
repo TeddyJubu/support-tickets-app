@@ -6,6 +6,7 @@ import { searchKb } from "../kb/search";
 import { getDb, isSimOrder } from "../sim-db";
 import { getOrderByName, storeConfig } from "../store-d1.mjs";
 import { neutralize } from "./markers";
+import { returnsForTicket } from "../returns";
 
 export interface ToolContext {
   ticketId: string;
@@ -40,6 +41,15 @@ export const TOOLS: ChatTool[] = [
         type: "object",
         properties: { order_name: { type: "string", description: "Order name like #S1001; defaults to the ticket's order" } },
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_returns",
+      description:
+        "Return and exchange status for the ticket's order (requested, label sent, in transit, received, refunded/exchanged). Background for the reply: never promise or confirm a refund.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -107,6 +117,21 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: ToolCo
         tracking: f.tracking_number,
       })),
       refunded: order.refunds.flatMap((r: { transactions: Array<{ amount: string }> }) => r.transactions).reduce((s: number, t: { amount: string }) => s + Number(t.amount), 0),
+    });
+  }
+  if (name === "get_returns") {
+    const returns = returnsForTicket(ctx.ticketId);
+    return JSON.stringify({
+      returns: returns.map((r) => ({
+        order: r.orderName,
+        kind: r.kind,
+        status: r.status,
+        items: r.items.map((i) => clip(i, 120)),
+        refund_amount: r.refundAmount,
+        exchange_for: r.exchangeFor ? clip(r.exchangeFor, 120) : null,
+        updated: r.updatedAt,
+      })),
+      note: returns.length ? undefined : "No return or exchange on file for this ticket's order",
     });
   }
   if (name === "get_customer_tickets") {

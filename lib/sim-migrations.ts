@@ -275,4 +275,36 @@ export const SIM_MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    version: 7,
+    name: "customer rail: store snapshots, simulated returns",
+    up: (db) =>
+      db.exec(`
+        -- Last successful read of the demo store for a ticket (shown when the store is slow or down)
+        CREATE TABLE store_snapshots (
+          ticket_id TEXT PRIMARY KEY REFERENCES sim_tickets(id),
+          data TEXT NOT NULL,                      -- JSON
+          fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_error TEXT,
+          last_error_at TEXT
+        );
+
+        -- Returns and exchanges for simulated orders (stands in for Redo in this test system)
+        CREATE TABLE sim_returns (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ticket_id TEXT REFERENCES sim_tickets(id),
+          customer_id TEXT REFERENCES sim_customers(id),
+          order_name TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'return',     -- return | exchange
+          status TEXT NOT NULL DEFAULT 'requested',-- requested | label_sent | in_transit | received | refunded | exchanged | rejected
+          items TEXT NOT NULL DEFAULT '[]',        -- JSON list of item titles
+          refund_amount REAL,
+          store_credit REAL,
+          exchange_for TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX sim_returns_order ON sim_returns(order_name);
+      `),
+  },
 ];

@@ -238,7 +238,7 @@ async function openTicket(src, runId) {
 
   const body = dryRun ? `(dry run) ${prompt}` : await llm(PERSONA_SYSTEM, prompt);
   const payload = {
-    customer: persona,
+    customer: order?.customer_id != null ? { ...persona, storeCustomerId: String(order.customer_id) } : persona,
     subject,
     body,
     priority: src.priority ?? "normal",
@@ -248,6 +248,8 @@ async function openTicket(src, runId) {
     orderId: order?.id != null ? String(order.id) : null,
     sourceTicketId: String(src.id),
     runId,
+    // Returns and exchanges get a simulated return record, like the store's returns app would have
+    ...(order && /return|exchange|refund/i.test(src.ai_intent ?? "") ? { simReturn: simulatedReturn(order, src.ai_intent) } : {}),
   };
   if (dryRun) {
     console.log(JSON.stringify(payload, null, 2));
@@ -261,6 +263,21 @@ async function openTicket(src, runId) {
     `+ ${detail.ticket.id}  ${persona.firstName} ${persona.lastName}  "${subject}"${order ? `  (order ${order.name})` : ""}  [from #${src.id}]`,
   );
   return detail;
+}
+
+function simulatedReturn(order, intent) {
+  const exchange = /exchange/i.test(intent ?? "");
+  const statuses = ["requested", "label_sent", "in_transit", "received", exchange ? "exchanged" : "refunded"];
+  const status = statuses[Math.floor(Math.random() * statuses.length)];
+  const items = (order.line_items ?? []).slice(0, 1).map((l) => l.title);
+  const value = (order.line_items ?? []).slice(0, 1).reduce((sum, l) => sum + Number(l.price ?? 0) * (l.quantity ?? 1), 0);
+  return {
+    kind: exchange ? "exchange" : "return",
+    status,
+    items,
+    refundAmount: !exchange && status === "refunded" ? Number(value.toFixed(2)) : null,
+    exchangeFor: exchange ? "Different size (requested by the customer)" : null,
+  };
 }
 
 const FOLLOW_UP_SYSTEM = `You role-play a customer of Buttons Bebe, an online children's clothing store, continuing an email thread with support.

@@ -93,9 +93,9 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 6 — Customer rail with store data
 
-- [ ] **6.1 Customer rail (M).** Right-side rail: customer profile (export + demo store pseudonym), matched order, line items, tracking, refunds, order history; incomplete data shows "unavailable", never 0. Server-side, signed-in only, simulated orders only (existing rule).
-- [ ] **6.2 Snapshot cache (S).** Cache store lookups per ticket in `sim.db` with a freshness timestamp ("showing last successful read" on failure).
-- [ ] **6.3 Simulated returns (M).** `sim_returns` table; simulator creates a return/exchange record for Return/Exchange intents; rail shows returns only when the order matches the ticket's verified order (Redo-worker rule).
+- [x] **6.1 Customer rail (M).** Right-side rail: customer profile (export + demo store pseudonym), matched order, line items, tracking, refunds, order history; incomplete data shows "unavailable", never 0. Server-side, signed-in only, simulated orders only (existing rule).
+- [x] **6.2 Snapshot cache (S).** Cache store lookups per ticket in `sim.db` with a freshness timestamp ("showing last successful read" on failure).
+- [x] **6.3 Simulated returns (M).** `sim_returns` table; simulator creates a return/exchange record for Return/Exchange intents; rail shows returns only when the order matches the ticket's verified order (Redo-worker rule).
 
 ### Phase 7 — Learning loop
 

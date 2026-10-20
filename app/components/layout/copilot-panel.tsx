@@ -14,6 +14,7 @@ import {
 import { useDashboard } from "../context/dashboard-context";
 import { Avatar, IconButton, StatusBadge, copyText } from "../ui";
 import { ticketStatusOf } from "./demo-sidebar";
+import { StoreRail } from "./store-rail";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -109,6 +110,8 @@ function CustomerDetails() {
         </div>
         {customer?.note && <p className="mt-3 text-xs text-muted-foreground">{customer.note}</p>}
       </Section>
+
+      {ticket.simulated && <StoreRail key={ticket.id} ticketId={ticket.id} />}
 
       {(customerRisk || sentiment) && (
         <Section title="AI insights">
