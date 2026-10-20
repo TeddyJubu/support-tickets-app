@@ -33,9 +33,10 @@ import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
+const envFile = join(root, ".env.local");
 const env = {};
 try {
-  for (const line of readFileSync(join(root, ".env.local"), "utf8").split("\n")) {
+  for (const line of readFileSync(envFile, "utf8").split("\n")) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
     if (m) env[m[1]] = m[2];
   }
@@ -103,7 +104,9 @@ const commands = {
     const [sim, hist, store] = await Promise.all([
       api("/api/helpdesk/tickets?source=sim&limit=1"),
       api("/api/helpdesk/tickets?limit=1"),
-      fetch(`${BASE}/api/helpdesk/orders?name=%23S0`).then((r) => r.status),
+      fetch(`${BASE}/api/helpdesk/orders?name=%23S0`, {
+        headers: env.SIM_API_KEY ? { authorization: `Bearer ${env.SIM_API_KEY}` } : {},
+      }).then((r) => r.status),
     ]);
     // The inbox holds simulated, real-email and staff tickets: count each channel separately
     const [simOnly, emailOnly] = await Promise.all([

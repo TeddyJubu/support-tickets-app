@@ -1,6 +1,6 @@
 import { getTicketDetail } from "@/lib/helpdesk-db";
 import { getSimTicketDetail, isSimTicketId } from "@/lib/sim-db";
-import { staffFromRequest } from "@/lib/request-auth";
+import { isAgentRequest, signInRequired, staffFromRequest } from "@/lib/request-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +9,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  if (!isAgentRequest(request)) return signInRequired();
   const { id } = await params;
   if (isSimTicketId(id)) {
     const detail = getSimTicketDetail(id, staffFromRequest(request)?.id ?? 0);

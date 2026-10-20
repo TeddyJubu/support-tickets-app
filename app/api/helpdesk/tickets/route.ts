@@ -1,13 +1,14 @@
 import { listTickets } from "@/lib/helpdesk-db";
 import { createSimTicket, getSimTicketDetail, listSimTickets, type TicketQuery } from "@/lib/sim-db";
 import { audit } from "@/lib/auth";
-import { requireStaff, staffFromRequest } from "@/lib/request-auth";
+import { isAgentRequest, requireStaff, signInRequired, staffFromRequest } from "@/lib/request-auth";
 import { createHash } from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  if (!isAgentRequest(request)) return signInRequired();
   const url = new URL(request.url);
   const p = url.searchParams;
   const limit = Math.min(Number(p.get("limit")) || 50, 100);

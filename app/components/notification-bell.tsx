@@ -32,6 +32,8 @@ export function NotificationBell({ onOpenTicket, align = "left" }: { onOpenTicke
     if (!item.read) mark({ ids: [item.id] });
     if (!item.ticketId) return;
     if (onOpenTicket) onOpenTicket(item.ticketId);
+    // A full load: the inbox reads ?ticket= when it mounts
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     else window.location.assign(`/?ticket=${encodeURIComponent(item.ticketId)}`);
   };
   return (

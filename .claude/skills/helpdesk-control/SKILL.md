@@ -51,7 +51,7 @@ A typical test cycle: `simulate --count N` → the worker drafts replies → han
 
 - **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOP_D1_TOKEN`, `SIM_API_KEY`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
 - **The demo store holds real customer data** (≈46k real customers, 324k real orders). Only ever write simulated rows (tagged `simulated`, `#S…` orders, `@customers.bb-sim.test` emails). Never modify, export or display real customers/orders, and don't change the `shop-sim` Worker itself.
-- **The helpdesk is on the public internet behind staff sign-in** (`proxy.ts`; search engines blocked). Never add a public endpoint that returns store, customer or ticket data. Store reads are limited to simulated customers and `#S` orders.
+- **The helpdesk is on the public internet behind staff sign-in** (`proxy.ts`; search engines blocked). Never add a public endpoint that returns store, customer or ticket data. Store reads are limited to simulated customers and `#S` orders. Staff choose their own passwords: never set one for someone (`user add` / `user password` ask the person at the terminal).
 - **Only people send.** The AI drafts; staff replies go out through Review and Confirm & send (`lib/sending.ts`). The CLI `reply` only works on simulated tickets, never on real email tickets.
 - Historical tickets are read-only; `reply`/`close` only work on `SIM-…` tickets.
 - After changing app code, run `npm run helpdesk -- restart` (it builds first). The user's own dev server may run on port 3000 — leave it alone.

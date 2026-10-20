@@ -1,5 +1,6 @@
 import { createRuntime } from "@yourgpt/llm-sdk";
 import { createOpenAI } from "@yourgpt/llm-sdk/openai";
+import { signInRequired, staffFromRequest } from "@/lib/request-auth";
 
 // Cloudflare Workers AI exposes an OpenAI-compatible Chat Completions API.
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -17,11 +18,14 @@ const runtime = createRuntime({
     "You are a helpful customer support assistant. Be concise and helpful.",
 });
 
+// Signed-in staff only: this spends the owner's Workers AI quota
 export async function POST(request: Request) {
+  if (!staffFromRequest(request)) return signInRequired();
   return runtime.handleRequest(request);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!staffFromRequest(request)) return signInRequired();
   return Response.json({
     status: "ok",
     provider: "cloudflare-workers-ai",

@@ -109,3 +109,5 @@ The server and worker read `.env.local` at startup: restart both after changing 
 | Backups failing | `npm run helpdesk -- ops`; "No backup certificate" → `backup-setup` |
 | `status` says service inactive | `npm run helpdesk -- logs 100`, then `sudo systemctl restart support-tickets` |
 | simulator: `Store database: … not authorized` | the D1 token lost access; it needs Account → D1 → Edit |
+| simulator: `Workers AI` errors / slow | model quota or outage; try `--no-orders --count 1`, or set `CF_MODEL` |
+| everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |

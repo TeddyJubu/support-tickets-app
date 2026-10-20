@@ -28,6 +28,9 @@ export function actorFromRequest(request: Request): Actor | null {
   return null;
 }
 
+/** Staff or the operator CLI/simulator key: for read routes the CLI also uses */
+export const isAgentRequest = (request: Request) => actorFromRequest(request) !== null;
+
 export const signInRequired = () => Response.json({ error: "Sign in required" }, { status: 401 });
 export const forbidden = (message = "Not allowed") => Response.json({ error: message }, { status: 403 });
 

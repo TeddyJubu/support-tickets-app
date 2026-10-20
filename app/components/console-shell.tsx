@@ -6,7 +6,7 @@ import { LogOut } from "lucide-react";
 import { AppNav } from "./app-nav";
 import { NotificationBell } from "./notification-bell";
 import { SessionProvider, useSession } from "./context/session-context";
-import { BrandMark } from "./layout/demo-sidebar";
+import { BrandMark } from "./ui";
 import { Avatar, IconButton } from "./ui";
 
 function UserBadge() {
