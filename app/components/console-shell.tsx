@@ -4,6 +4,7 @@
 
 import { LogOut } from "lucide-react";
 import { AppNav } from "./app-nav";
+import { NotificationBell } from "./notification-bell";
 import { SessionProvider, useSession } from "./context/session-context";
 import { BrandMark } from "./layout/demo-sidebar";
 import { Avatar, IconButton } from "./ui";
@@ -32,6 +33,7 @@ export function ConsoleShell({ title, actions, children }: { title: string; acti
           <AppNav className="ml-2" />
           <div className="ml-auto flex items-center gap-3">
             {actions}
+            <NotificationBell align="right" />
             <UserBadge />
           </div>
         </header>

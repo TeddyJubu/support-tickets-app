@@ -24,6 +24,7 @@ import { useDashboard } from "../context/dashboard-context";
 import { useSession } from "../context/session-context";
 import { Avatar, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
 import { AppNav } from "../app-nav";
+import { NotificationBell } from "../notification-bell";
 import { BulkBar, FilterMenu, NewTicketButton, Pager, VIEW_META, ViewPicker } from "./inbox-controls";
 import type { TicketStatus } from "../types";
 
@@ -257,6 +258,11 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
     setBulkAll,
   } = useDashboard();
   const inbox = ticketSource === "sim";
+  // Inbox tickets live in the "sim" source; switch to it before opening one from the bell
+  const selectTicketFromBell = (id: string) => {
+    if (ticketSource !== "sim") setTicketSource("sim");
+    selectTicket(id);
+  };
   const filtered = !!(filters.priority || filters.assignee || filters.tag || filters.channel);
 
   // Keep the selected ticket in view when moving with J/K
@@ -281,7 +287,12 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
           <p className="text-xs text-muted-foreground">Support inbox</p>
         </div>
       </div>
-      <AppNav className="px-3 pb-2" />
+      <div className="flex items-center px-3 pb-2">
+        <AppNav />
+        <span className="ml-auto">
+          <NotificationBell onOpenTicket={selectTicketFromBell} />
+        </span>
+      </div>
 
       {/* Source */}
       <div className="px-3">

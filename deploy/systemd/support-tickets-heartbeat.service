@@ -1,0 +1,17 @@
+# Checks the worker's heartbeat and emails the owner if it stopped (or came back).
+# Installed with support-tickets-heartbeat.timer (needs the owner's OK):
+#   sudo cp deploy/systemd/support-tickets-heartbeat.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now support-tickets-heartbeat.timer
+[Unit]
+Description=Support Tickets worker heartbeat check
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/support-tickets-app
+Environment=NODE_ENV=production
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.local/bin/node --no-warnings --import ./scripts/register-ts.mjs scripts/heartbeat-check.ts
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

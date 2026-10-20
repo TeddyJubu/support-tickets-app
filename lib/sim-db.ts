@@ -8,6 +8,7 @@ import { openDatabase, transaction } from "./db";
 import { SIM_MIGRATIONS } from "./sim-migrations";
 import { queueDraft } from "./drafting/queue";
 import { aiDraftState } from "./drafting/state";
+import { notifyUser } from "./notify";
 import {
   INBOX_VIEWS,
   PRIORITIES,
@@ -417,6 +418,10 @@ export function appendMessage(
       ).run(ticketId);
       // Same transaction: triage the message and queue an AI draft for it
       queueDraft(d, ticketId, messageId);
+      const assigned = d.prepare(`SELECT assignee_id, subject FROM sim_tickets WHERE id = ?`).get(ticketId) as Row;
+      if (assigned.assignee_id != null) {
+        notifyUser(d, Number(assigned.assignee_id), "reply", ticketId, `${sender ?? "The customer"} replied on ${ticketId}: ${String(assigned.subject ?? "")}`);
+      }
     } else if (author === "note") {
       d.prepare(`UPDATE sim_tickets SET updated_at = datetime('now') WHERE id = ?`).run(ticketId);
     }

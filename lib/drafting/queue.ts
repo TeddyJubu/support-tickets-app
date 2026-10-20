@@ -9,6 +9,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { transaction } from "../db";
 import { classify, SEVERITY_RANK, type Severity } from "../classifier";
+import { urgentTicket } from "../notify";
 
 export type JobState = "pending" | "processing" | "retry_wait" | "done" | "failed" | "superseded" | "skipped";
 export type ErrorKind = "transient" | "auth" | "invalid" | "safety" | "stale";
@@ -73,6 +74,7 @@ export function queueDraft(d: DatabaseSync, ticketId: string, messageId: number)
         JSON.stringify({ priority: c.priority, reason: c.reason }),
       );
     }
+    if (c.notifyOwner && (c.priority === "high" || c.priority === "critical")) urgentTicket(d, ticketId, c.priority, c.reason);
     if (!autoDraftsEnabled()) return null;
     const urgent = c.sensitive && (c.priority === "high" || c.priority === "critical");
     const res = d

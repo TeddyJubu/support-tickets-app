@@ -105,11 +105,11 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 8 — Alerts and notifications
 
-- [ ] **8.1 Notifications bell (S).** Ticket-activity notifications per staff user, unread count, mark all read.
-- [ ] **8.2 Owner alerts (M).** High/critical tickets (from 4.3) alert the owner by email (SES); de-duplicated; every attempt logged.
-- [ ] **8.3 Alert log page (S).** Paged list of alert attempts, retry button, link to ticket.
-- [ ] **8.4 Heartbeat alert (S).** If the worker heartbeat is stale, alert once and once more on recovery.
-- [ ] **8.5 WhatsApp channel (L, optional).** Separate small Node service with Baileys QR pairing, test alert, unlink; bound to localhost behind Caddy. Only after decision 3.
+- [x] **8.1 Notifications bell (S).** Ticket-activity notifications per staff user, unread count, mark all read.
+- [x] **8.2 Owner alerts (M).** High/critical tickets (from 4.3) alert the owner by email (SES); de-duplicated; every attempt logged.
+- [x] **8.3 Alert log page (S).** Paged list of alert attempts, retry button, link to ticket.
+- [x] **8.4 Heartbeat alert (S).** If the worker heartbeat is stale, alert once and once more on recovery.
+- [ ] **8.5 WhatsApp channel (L, optional, not built: waits for decision 3 and a phone to pair).** Separate small Node service with Baileys QR pairing, test alert, unlink; bound to localhost behind Caddy. Only after decision 3.
 
 ### Phase 9 — Operations and console
 

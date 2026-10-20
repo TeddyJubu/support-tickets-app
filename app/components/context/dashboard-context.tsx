@@ -371,6 +371,17 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     applyDetail((await res.json()) as TicketDetail, true);
   }, [applyDetail]);
 
+  // Opened from a link (alert email, notification): /?ticket=SIM-1016
+  useEffect(() => {
+    const linked = new URLSearchParams(window.location.search).get("ticket");
+    if (!linked || !/^SIM-\d+$/.test(linked)) return;
+    const timer = setTimeout(() => {
+      window.history.replaceState(null, "", window.location.pathname);
+      selectTicket(linked);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [selectTicket]);
+
   // Debounced search; selects the first ticket when nothing is open. Back to page 1 on any change.
   useEffect(() => {
     const timer = setTimeout(async () => {

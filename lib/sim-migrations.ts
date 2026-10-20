@@ -336,4 +336,40 @@ export const SIM_MIGRATIONS: Migration[] = [
         CREATE INDEX lessons_status ON lessons(status, id);
       `),
   },
+  {
+    version: 9,
+    name: "notifications and owner alerts",
+    up: (db) =>
+      db.exec(`
+        CREATE TABLE notifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES staff_users(id),
+          kind TEXT NOT NULL,                      -- reply | assigned | urgent | alert
+          ticket_id TEXT,
+          text TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          read_at TEXT
+        );
+        CREATE INDEX notifications_user ON notifications(user_id, read_at, id);
+
+        -- Owner alerts (email). dedupe_key keeps one alert per event; every attempt is logged.
+        CREATE TABLE alerts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL,                      -- urgent_ticket | worker_down | worker_recovered | test
+          ticket_id TEXT,
+          severity TEXT,
+          subject TEXT NOT NULL,
+          body TEXT NOT NULL,
+          dedupe_key TEXT UNIQUE,
+          status TEXT NOT NULL DEFAULT 'pending',  -- pending | sending | sent | failed | skipped
+          attempts INTEGER NOT NULL DEFAULT 0,
+          recipient TEXT,
+          last_error TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          sent_at TEXT,
+          next_attempt_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX alerts_status ON alerts(status, next_attempt_at);
+      `),
+  },
 ];

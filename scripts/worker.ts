@@ -12,6 +12,7 @@ import { claimNextJob, recoverStaleJobs } from "@/lib/drafting/queue";
 import { processJob, JOB_TIMEOUT_MS } from "@/lib/drafting/run";
 import { setState, type Heartbeat } from "@/lib/worker/state";
 import { runDueTasks } from "@/lib/worker/schedule";
+import { deliverAlerts } from "@/lib/alerts";
 import { loadEnv } from "./env";
 
 loadEnv();
@@ -67,6 +68,9 @@ async function loop() {
   while (!stopping) {
     heartbeat();
     recoverStaleJobs(getDb());
+    // Owner alerts go out before the next draft, so an urgent ticket is never stuck behind one
+    const alerts = await deliverAlerts().catch((err) => (log(`alerts: ${err}`), null));
+    if (alerts && (alerts.sent || alerts.failed)) log(`alerts sent ${alerts.sent}, failed ${alerts.failed}`);
     const job = claimNextJob(getDb(), WORKER_ID);
     if (!job) {
       // Maintenance only while the queue is empty, so drafts never wait behind it

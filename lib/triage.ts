@@ -6,6 +6,7 @@ import { transaction } from "./db";
 import { audit } from "./auth";
 import { getDb, nowSql } from "./sim-db";
 import { PRIORITIES } from "./helpdesk-types";
+import { notifyUser } from "./notify";
 
 export interface TicketChanges {
   status?: "open" | "pending" | "closed";
@@ -135,6 +136,11 @@ export function applyChanges(ids: string[], changes: TicketChanges, actor: strin
       if (changes.addTag) d.prepare(`INSERT OR IGNORE INTO ticket_tags (ticket_id, tag) VALUES (?, ?)`).run(id, changes.addTag);
       if (changes.removeTag) d.prepare(`DELETE FROM ticket_tags WHERE ticket_id = ? AND tag = ?`).run(id, changes.removeTag);
       if (changes.read !== undefined && userId) setRead(id, userId, changes.read);
+      // Someone else assigned it to you
+      if (changes.assigneeId && changes.assigneeId !== userId) {
+        const subject = (d.prepare(`SELECT subject FROM sim_tickets WHERE id = ?`).get(id) as { subject: string | null }).subject;
+        notifyUser(d, changes.assigneeId, "assigned", id, `${actor} assigned ${id} to you: ${subject ?? ""}`);
+      }
       const logged = Object.fromEntries(Object.entries(changes).filter(([k]) => k !== "read"));
       if (Object.keys(logged).length) audit(actor, "triage", id, logged);
     }
