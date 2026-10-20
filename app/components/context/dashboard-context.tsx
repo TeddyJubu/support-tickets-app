@@ -56,6 +56,24 @@ export interface ListFilters {
 export const NO_FILTERS: ListFilters = { priority: "", assignee: "", tag: "", channel: "", sort: "newest" };
 export type SidePanel = "copilot" | "customer";
 
+export interface ReviewData {
+  reviewToken: string;
+  channel: "email" | "simulator";
+  recipient: string;
+  subject: string | null;
+  answering: { id: number; excerpt: string; at: string } | null;
+  expiresAt: string;
+}
+
+export interface ReviewState {
+  ticketId: string;
+  body: string;
+  data: ReviewData;
+  closeAfter: boolean;
+  busy: boolean;
+  error: { code: string; message: string } | null;
+}
+
 export interface Toast {
   id: number;
   message: string;
@@ -539,17 +557,42 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  // Idempotency key of the email reply in flight or last failed: sending the same text to the
-  // same ticket again reuses it, so the server never emails one reply twice
-  const pendingEmailReply = useRef<{ ticketId: string; body: string; key: string } | null>(null);
+  // ---------- sending: Read & write, review, confirm ----------
 
-  // Resolves true once the reply is saved (and emailed, for email tickets)
+  // Sending is off after every page load; turning it on asks the server for a 30-minute grant
+  const [sendAccessUntil, setSendAccessUntil] = useState<string | null>(null);
+  const [review, setReview] = useState<ReviewState | null>(null);
+  // Idempotency key of the reply in flight or last failed: confirming the same text on the same
+  // ticket again reuses it, so the server never sends one reply twice
+  const pendingKey = useRef<{ ticketId: string; body: string; key: string } | null>(null);
+
+  useEffect(() => {
+    if (!sendAccessUntil) return;
+    const ms = Date.parse(sendAccessUntil) - Date.now();
+    const timer = setTimeout(() => {
+      setSendAccessUntil(null);
+      notify("Read & write ended: sending is off again", "info");
+    }, Math.max(0, ms));
+    return () => clearTimeout(timer);
+  }, [sendAccessUntil, notify]);
+
+  const setSendAccess = useCallback(
+    async (enable: boolean) => {
+      try {
+        const { expiresAt } = await apiJson<{ expiresAt: string | null }>("/api/helpdesk/send-access", jsonInit("POST", { enable }));
+        setSendAccessUntil(expiresAt);
+        return true;
+      } catch (err) {
+        notify(`Couldn't change Read & write: ${err instanceof Error ? err.message : "error"}`, "error");
+        return false;
+      }
+    },
+    [notify],
+  );
+
+  // Opens the review dialog (inbox tickets); resolves true when the review is shown
   const sendAgentMessage = useCallback(
-    async (
-      content: string,
-      channel: "Chat" | "Email" = "Email",
-      emailSubject?: string,
-    ): Promise<boolean> => {
+    async (content: string, channel: "Chat" | "Email" = "Email", emailSubject?: string, closeAfter = false): Promise<boolean> => {
       if (!content.trim()) return false;
       const id = selectedRef.current;
       if (!id || ticketDetail?.ticket.id !== id) {
@@ -557,43 +600,19 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
       if (id.startsWith("SIM-")) {
-        // Simulated tickets: save the reply so the simulated customer can answer it
-        // Email tickets: really sends to the customer (password-protected route)
-        const isEmail = ticketDetail.ticket.channel === "email";
-        let idempotencyKey: string | undefined;
-        if (isEmail) {
-          const last = pendingEmailReply.current;
-          idempotencyKey =
-            last?.ticketId === id && last.body === content.trim() ? last.key : crypto.randomUUID();
-          pendingEmailReply.current = { ticketId: id, body: content.trim(), key: idempotencyKey };
+        if (!sendAccessUntil) {
+          notify("Sending is off. Turn on Read & write first.", "error");
+          return false;
         }
         setSending(true);
         try {
-          const res = await apiFetch(
-            isEmail
-              ? `/api/helpdesk/email/tickets/${id}/reply`
-              : `/api/helpdesk/sim/tickets/${id}/messages`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ author: "agent", body: content, idempotencyKey }),
-            },
-          );
-          if (!res.ok) {
-            const err = (await res.json().catch(() => null)) as { error?: string } | null;
-            // 409/500 from the email route: it may already have been emailed, and the message says so
-            const maybeSent = isEmail && (res.status === 409 || res.status === 500) && err?.error;
-            notify(maybeSent || `Reply not sent: ${err?.error ?? `HTTP ${res.status}`}`, "error");
-            return false;
-          }
-          if (pendingEmailReply.current?.key === idempotencyKey) pendingEmailReply.current = null;
-          setState((prev) => (prev.composeText === content ? { ...prev, composeText: "" } : prev));
-          if (selectedRef.current === id) applyDetail((await res.json()) as TicketDetail, true);
-          notify(isEmail ? "Reply emailed to the customer" : "Reply sent");
-          fetchTickets(ticketQuery, undefined, true);
+          const data = await apiJson<ReviewData>(`/api/helpdesk/tickets/${id}/send/review`, jsonInit("POST", { body: content }));
+          if (selectedRef.current !== id) return false;
+          setReview({ ticketId: id, body: content.trim(), data, closeAfter, error: null, busy: false });
           return true;
-        } catch {
-          notify("Reply not sent: network error", "error");
+        } catch (err) {
+          notify(`Can't send yet: ${err instanceof Error ? err.message : "error"}`, "error");
+          refreshSelected();
           return false;
         } finally {
           setSending(false);
@@ -620,7 +639,67 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       }));
       return true;
     },
-    [applyDetail, ticketDetail, notify, fetchTickets, ticketQuery],
+    [ticketDetail, notify, sendAccessUntil, refreshSelected],
+  );
+
+  const cancelReview = useCallback(() => setReview(null), []);
+
+  const confirmReview = useCallback(async () => {
+    const r = review;
+    if (!r || r.busy) return;
+    const last = pendingKey.current;
+    const key = last?.ticketId === r.ticketId && last.body === r.body ? last.key : crypto.randomUUID();
+    pendingKey.current = { ticketId: r.ticketId, body: r.body, key };
+    setReview({ ...r, busy: true, error: null });
+    try {
+      const res = await apiFetch(
+        `/api/helpdesk/tickets/${r.ticketId}/send`,
+        jsonInit("POST", { body: r.body, reviewToken: r.data.reviewToken, idempotencyKey: key }),
+      );
+      const json = (await res.json().catch(() => null)) as (TicketDetail & { error?: string; code?: string }) | null;
+      if (!res.ok) {
+        // read_only: the grant ran out; the dialog says what to do for every other code
+        if (json?.code === "read_only") setSendAccessUntil(null);
+        setReview((cur) => (cur === null ? null : { ...cur, busy: false, error: { code: json?.code ?? "error", message: json?.error ?? `HTTP ${res.status}` } }));
+        if (json?.code && json.code !== "read_only") refreshSelected();
+        return;
+      }
+      if (pendingKey.current?.key === key) pendingKey.current = null;
+      setReview(null);
+      setState((prev) => (prev.composeText.trim() === r.body ? { ...prev, composeText: "" } : prev));
+      if (selectedRef.current === r.ticketId && json) applyDetail(json as TicketDetail, true);
+      notify(r.data.channel === "email" ? `Reply emailed to ${r.data.recipient}` : "Reply sent to the simulated customer");
+      fetchTickets(ticketQuery, undefined, true);
+      if (r.closeAfter) {
+        await apiFetch(`/api/helpdesk/sim/tickets/${r.ticketId}`, jsonInit("PATCH", { status: "closed" }));
+        if (selectedRef.current === r.ticketId) refreshSelected();
+      }
+    } catch {
+      setReview((cur) =>
+        cur === null
+          ? null
+          : { ...cur, busy: false, error: { code: "network", message: "Network error: the reply may or may not have gone out. Confirm again to retry safely (it won't send twice)." } },
+      );
+    }
+  }, [review, applyDetail, notify, fetchTickets, ticketQuery, refreshSelected]);
+
+  const resolvePendingSend = useCallback(
+    async (outcome: "sent" | "not_sent") => {
+      const id = selectedRef.current;
+      const pending = ticketDetail?.pendingSend;
+      if (!id || !pending) return false;
+      try {
+        const detail = await apiJson<TicketDetail>(`/api/helpdesk/tickets/${id}/send/resolve`, jsonInit("POST", { key: pending.key, outcome }));
+        if (selectedRef.current === id) applyDetail(detail, true);
+        notify(outcome === "sent" ? "Recorded as sent" : "Marked not sent: you can send the reply again");
+        return true;
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "Couldn't settle the send", "error");
+        refreshSelected();
+        return false;
+      }
+    },
+    [ticketDetail, applyDetail, notify, refreshSelected],
   );
 
   // Ticket status
@@ -769,6 +848,12 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         selectAdjacentTicket,
         addMessage,
         sendAgentMessage,
+        sendAccessUntil,
+        setSendAccess,
+        review,
+        cancelReview,
+        confirmReview,
+        resolvePendingSend,
         setTicketStatus,
         setComposeText,
         setCustomerRisk,

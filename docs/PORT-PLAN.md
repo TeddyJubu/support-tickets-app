@@ -85,11 +85,11 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 5 — Safe sending
 
-- [ ] **5.1 Send intents for every reply (M).** Generalize `sim_email_outbox` into `send_intents` (operation id, content hash, recipient, source message, state) for both email and simulated replies. Ambiguous results never auto-retry.
-- [ ] **5.2 Read & write switch (S).** Inbox starts read-only; a 30-minute, session-bound send grant (stored as a digest) enables sending; reload or expiry returns to read-only.
-- [ ] **5.3 Review → Confirm & send (S).** Dialog shows recipient, the message being answered and the exact reply.
-- [ ] **5.4 Stale-review rejection (S).** Refuse if a newer customer message, changed draft or changed recipient appeared since review.
-- [ ] **5.5 Uncertain delivery (S).** Pending/unknown sends block a new reply until "Check status" resolves it.
+- [x] **5.1 Send intents for every reply (M).** Generalize `sim_email_outbox` into `send_intents` (operation id, content hash, recipient, source message, state) for both email and simulated replies. Ambiguous results never auto-retry.
+- [x] **5.2 Read & write switch (S).** Inbox starts read-only; a 30-minute, session-bound send grant (stored as a digest) enables sending; reload or expiry returns to read-only.
+- [x] **5.3 Review → Confirm & send (S).** Dialog shows recipient, the message being answered and the exact reply.
+- [x] **5.4 Stale-review rejection (S).** Refuse if a newer customer message, changed draft or changed recipient appeared since review.
+- [x] **5.5 Uncertain delivery (S).** Pending/unknown sends block a new reply until "Check status" resolves it.
 
 ### Phase 6 — Customer rail with store data
 

@@ -122,6 +122,8 @@ export interface TicketDetail {
   messages?: SimMessage[];
   /** Inbox tickets: the latest AI draft and drafting job */
   ai?: AiDraftState;
+  /** Inbox tickets: a reply whose delivery isn't confirmed yet (blocks new replies) */
+  pendingSend?: PendingSend | null;
 }
 
 export interface Product {
@@ -156,4 +158,13 @@ export interface TicketListResponse {
   limit: number;
   /** Inbox only: ticket count per view */
   counts?: Record<InboxView, number>;
+}
+
+export interface PendingSend {
+  key: string;
+  createdAt: string;
+  excerpt: string;
+  hasMessageId: boolean;
+  /** Older than two minutes, or emailed but not saved: a person must check */
+  uncertain: boolean;
 }

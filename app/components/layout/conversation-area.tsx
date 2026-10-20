@@ -8,6 +8,7 @@ import { Skeleton } from "../ui";
 import { Message } from "./message";
 import { MessageComposer } from "./message-composer";
 import { DraftStrip } from "./draft-strip";
+import { ReviewDialog } from "./send-review";
 
 function ConversationSkeleton() {
   return (
@@ -152,6 +153,7 @@ export function ConversationArea() {
         </div>
       )}
       {loaded && <MessageComposer key={ticketDetail.ticket.id} />}
+      <ReviewDialog />
     </div>
   );
 }

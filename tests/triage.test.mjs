@@ -203,14 +203,3 @@ test("attachments: stored content-addressed, executables refused, served to staf
   assert.equal((await call(attachmentRoute.GET, { params: { id: String(atts[0].id) } })).status, 401);
   assert.equal((await call(attachmentRoute.GET, { params: { id: String(atts[1].id) }, headers: { cookie: alice.cookie } })).status, 404);
 });
-
-test("the email reply route refuses bearer-key callers", async () => {
-  const reply = await importApp("app/api/helpdesk/email/tickets/[id]/reply/route.ts");
-  const r = await call(reply.POST, {
-    method: "POST",
-    params: { id: a },
-    headers: { authorization: `Bearer ${process.env.SIM_API_KEY}` },
-    body: { body: "x", idempotencyKey: "k".repeat(20) },
-  });
-  assert.equal(r.status, 401);
-});

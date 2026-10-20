@@ -6,8 +6,8 @@ import { actorFromRequest, signInRequired } from "@/lib/request-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Agent replies and internal notes come from signed-in staff (or the server CLI); customer
-// messages only from the simulator. Email tickets reply through /api/helpdesk/email/... instead.
+// Internal notes come from signed-in staff; simulated agent replies from the server CLI;
+// customer messages only from the simulator. Staff replies use /api/helpdesk/tickets/[id]/send.
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -30,8 +30,13 @@ export async function POST(
     if (!actor) return signInRequired();
     // Staff messages are signed with the signed-in name, never a name the client sends
     sender = actor.kind === "staff" ? actor.user.displayName : (body.sender ?? "Support (CLI)");
+    // Staff replies go through review-and-confirm (/api/helpdesk/tickets/[id]/send); only the
+    // server CLI may post a simulated reply directly, and never on a real email ticket
+    if (author === "agent" && actor.kind === "staff") {
+      return Response.json({ error: "Send replies through Review and Confirm & send" }, { status: 409 });
+    }
     if (author === "agent" && emailThread(id)) {
-      return Response.json({ error: "This is an email ticket: reply through the email route" }, { status: 409 });
+      return Response.json({ error: "This is an email ticket: staff must send from the inbox" }, { status: 409 });
     }
     audit(actor.name, author === "note" ? "note" : "reply", id, author === "note" ? undefined : { channel: "simulated" });
   }

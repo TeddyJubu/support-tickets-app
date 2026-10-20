@@ -1,5 +1,5 @@
 import type { Attachment, InboxView, TicketDetail, TicketSummary } from "@/lib/helpdesk-types";
-import type { ListFilters } from "./context/dashboard-context";
+import type { ListFilters, ReviewState } from "./context/dashboard-context";
 
 // ============================================
 // DASHBOARD STATE TYPES
@@ -133,11 +133,20 @@ export interface DashboardContextType extends DashboardState {
   selectAdjacentTicket: (direction: -1 | 1) => void;
   // Message management
   addMessage: (message: Omit<TicketMessage, "id">) => void;
+  /** Inbox tickets: opens Review (needs Read & write); archive: adds the reply locally */
   sendAgentMessage: (
     content: string,
     channel?: "Chat" | "Email",
     emailSubject?: string,
+    closeAfter?: boolean,
   ) => Promise<boolean>;
+  /** When this page's Read & write ends; null when sending is off */
+  sendAccessUntil: string | null;
+  setSendAccess: (enable: boolean) => Promise<boolean>;
+  review: ReviewState | null;
+  cancelReview: () => void;
+  confirmReview: () => Promise<void>;
+  resolvePendingSend: (outcome: "sent" | "not_sent") => Promise<boolean>;
   // Ticket status
   /** Defaults to the selected ticket */
   setTicketStatus: (status: TicketStatus, ticketId?: string) => Promise<boolean>;

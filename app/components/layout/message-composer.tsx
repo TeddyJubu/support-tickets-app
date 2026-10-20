@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useDashboard } from "../context/dashboard-context";
 import { Kbd, modKey } from "../ui";
+import { PendingSendBanner, SendAccessSwitch } from "./send-review";
 
 export function MessageComposer() {
   const {
@@ -28,6 +29,7 @@ export function MessageComposer() {
     sending,
     setSidePanel,
     addNote,
+    sendAccessUntil,
   } = useDashboard();
   // Internal notes are never sent to the customer
   const [mode, setMode] = useState<"reply" | "note">("reply");
@@ -40,7 +42,12 @@ export function MessageComposer() {
   const recipientName =
     ticketDetail?.customer?.name ?? ticket?.customerName ?? "the customer";
   const recipientEmail = ticketDetail?.customer?.email ?? ticket?.customerEmail;
-  const canSend = composeText.trim().length > 0 && !sending;
+  // Inbox replies need Read & write and no unconfirmed earlier send; notes don't
+  const replyLocked =
+    !archived &&
+    mode === "reply" &&
+    (!sendAccessUntil || !!ticketDetail?.pendingSend);
+  const canSend = composeText.trim().length > 0 && !sending && !replyLocked;
 
   // Grow with the text, up to a cap
   useLayoutEffect(() => {
@@ -64,14 +71,18 @@ export function MessageComposer() {
       await addNote(composeText);
       return;
     }
-    // Close the ticket the reply went to, even if the agent has moved on
+    // Inbox tickets open Review; closing happens after the confirmed send
+    if (!archived) {
+      await sendAgentMessage(composeText, "Email", undefined, thenClose);
+      return;
+    }
     const id = ticket.id;
     const ok = await sendAgentMessage(
       composeText,
       "Email",
       ticket.subject ? `Re: ${ticket.subject}` : undefined,
     );
-    if (ok && thenClose && !archived) await setTicketStatus("closed", id);
+    if (ok && thenClose) await setTicketStatus("closed", id);
   };
 
   const draftWithAi = () => {
@@ -83,36 +94,45 @@ export function MessageComposer() {
     <div className="border-t border-border bg-background px-6 pb-4 pt-3">
       <div className="mx-auto w-full max-w-3xl">
         {!archived && (
-          <div
-            className="mb-2 inline-flex rounded-lg bg-muted p-0.5 text-xs"
-            role="tablist"
-            aria-label="Reply or note"
-          >
-            {(
-              [
-                ["reply", "Reply", Mail],
-                ["note", "Internal note", StickyNote],
-              ] as const
-            ).map(([value, label, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={mode === value}
-                onClick={() => setMode(value)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors",
-                  mode === value
-                    ? "bg-background text-foreground shadow-soft"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <Icon className="size-3.5" />
-                {label}
-              </button>
-            ))}
+          <div className="mb-2 flex items-center gap-2">
+            <div
+              className="inline-flex rounded-lg bg-muted p-0.5 text-xs"
+              role="tablist"
+              aria-label="Reply or note"
+            >
+              {(
+                [
+                  ["reply", "Reply", Mail],
+                  ["note", "Internal note", StickyNote],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === value}
+                  onClick={() => setMode(value)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors",
+                    mode === value
+                      ? "bg-background text-foreground shadow-soft"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === "reply" && (
+              <span className="ml-auto">
+                <SendAccessSwitch />
+              </span>
+            )}
           </div>
         )}
+
+        {!archived && mode === "reply" && <PendingSendBanner />}
 
         {/* Who this goes to */}
         {mode === "note" ? (
@@ -244,7 +264,13 @@ export function MessageComposer() {
               ) : (
                 <Send className="size-3.5" />
               )}
-              {sending ? "Saving…" : mode === "note" ? "Add note" : "Send"}
+              {sending
+                ? "Working…"
+                : mode === "note"
+                  ? "Add note"
+                  : archived
+                    ? "Send"
+                    : "Review & send"}
             </button>
           </div>
         </div>

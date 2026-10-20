@@ -240,4 +240,39 @@ export const SIM_MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    version: 6,
+    name: "safe sending: send intents for every channel, send grants, reviews",
+    up: (db) =>
+      db.exec(`
+        -- sim_email_outbox becomes the send-intent log for every reply (email and simulated)
+        ALTER TABLE sim_email_outbox ADD COLUMN channel TEXT NOT NULL DEFAULT 'email';
+        ALTER TABLE sim_email_outbox ADD COLUMN recipient TEXT;
+        ALTER TABLE sim_email_outbox ADD COLUMN source_message_id INTEGER;
+        ALTER TABLE sim_email_outbox ADD COLUMN actor TEXT;
+        ALTER TABLE sim_email_outbox ADD COLUMN resolved_by TEXT;   -- staff who settled an uncertain send
+        CREATE INDEX sim_email_outbox_ticket ON sim_email_outbox(ticket_id, status);
+
+        -- "Read & write": a 30-minute permission to send, bound to one browser session
+        CREATE TABLE send_grants (
+          session_hash TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES staff_users(id),
+          created_at TEXT DEFAULT (datetime('now')),
+          expires_at TEXT NOT NULL
+        );
+
+        -- What the staff member reviewed before confirming: the send must still match it
+        CREATE TABLE send_reviews (
+          token_hash TEXT PRIMARY KEY,
+          ticket_id TEXT NOT NULL,
+          user_id INTEGER NOT NULL,
+          content_hash TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          source_message_id INTEGER,
+          created_at TEXT DEFAULT (datetime('now')),
+          expires_at TEXT NOT NULL,
+          used_at TEXT
+        );
+      `),
+  },
 ];

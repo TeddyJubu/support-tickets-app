@@ -66,8 +66,13 @@ export function aiDraftState(d: DatabaseSync, ticketId: string): AiDraftState {
     .prepare(`SELECT * FROM drafts WHERE ticket_id = ? AND state != 'superseded' ORDER BY id DESC LIMIT 1`)
     .get(ticketId) as Row | undefined;
   const detail = json<Record<string, unknown>>(job?.detail, {});
+  // Once the customer has been answered, a used or dismissed draft is history: don't show it
+  const answered =
+    draft &&
+    draft.state !== "ready" &&
+    d.prepare(`SELECT 1 FROM sim_messages WHERE ticket_id = ? AND author = 'agent' AND id > ?`).get(ticketId, Number(draft.message_id ?? 0));
   return {
-    draft: draft ? toDraft(draft) : null,
+    draft: draft && !answered ? toDraft(draft) : null,
     job: job
       ? {
           id: Number(job.id),

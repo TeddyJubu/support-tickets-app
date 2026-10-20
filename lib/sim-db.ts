@@ -249,6 +249,7 @@ export function getSimTicketDetail(id: string, viewer = 0): TicketDetail | null 
   };
   return {
     ai: aiDraftState(getDb(), id),
+    pendingSend: pendingSend(id),
     ticket: toTicket(r),
     customer: customerRow ? toCustomer(customerRow) : null,
     history: history.map(toSummary),
@@ -513,12 +514,20 @@ export type EmailReplyClaim =
   | { state: "sent"; detail: TicketDetail | null }
   | { state: "unsaved"; messageId: string };
 
-export function claimEmailReply(key: string, ticketId: string, body: string): EmailReplyClaim {
+export function claimEmailReply(
+  key: string,
+  ticketId: string,
+  body: string,
+  meta: { channel?: string; recipient?: string | null; sourceMessageId?: number | null; actor?: string | null } = {},
+): EmailReplyClaim {
   const d = getDb();
   // Single statements, so two requests (or processes) racing on one key can't both claim it
   const inserted = d
-    .prepare(`INSERT OR IGNORE INTO sim_email_outbox (idem_key, ticket_id, body) VALUES (?, ?, ?)`)
-    .run(key, ticketId, body);
+    .prepare(
+      `INSERT OR IGNORE INTO sim_email_outbox (idem_key, ticket_id, body, channel, recipient, source_message_id, actor)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(key, ticketId, body, meta.channel ?? "email", meta.recipient ?? null, meta.sourceMessageId ?? null, meta.actor ?? null);
   if (inserted.changes > 0) return { state: "send" };
   const row = d.prepare(`SELECT * FROM sim_email_outbox WHERE idem_key = ?`).get(key) as Row;
   if (row.ticket_id !== ticketId || row.body !== body) return { state: "conflict" };
@@ -586,4 +595,24 @@ export function emailThread(ticketId: string) {
     .map((m) => String(m.message_id))
     .filter((m) => m.startsWith("<"));
   return { to, subject: String(r.subject ?? "(no subject)"), messageIds };
+}
+
+/** A send still "sending" after this long, with no confirmation, is uncertain */
+export const UNCERTAIN_AFTER_SECONDS = 120;
+
+/** A reply on this ticket whose outcome isn't confirmed yet: it blocks new replies */
+export function pendingSend(ticketId: string) {
+  const r = getDb()
+    .prepare(`SELECT * FROM sim_email_outbox WHERE ticket_id = ? AND status = 'sending' ORDER BY created_at DESC LIMIT 1`)
+    .get(ticketId) as Row | undefined;
+  if (!r) return null;
+  const createdAt = iso(r.created_at)!;
+  const ageSeconds = (Date.now() - Date.parse(createdAt)) / 1000;
+  return {
+    key: String(r.idem_key),
+    createdAt,
+    excerpt: String(r.body ?? "").slice(0, 200),
+    hasMessageId: r.message_id != null,
+    uncertain: ageSeconds > UNCERTAIN_AFTER_SECONDS || r.message_id != null,
+  };
 }
