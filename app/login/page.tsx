@@ -5,7 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { Loader2, LogIn } from "lucide-react";
 
 // Only same-site paths, so ?next= can't send someone to another site
-const safeNext = (v: string | null) => (v && v.startsWith("/") && !v.startsWith("//") ? v : "/");
+// (browsers read a backslash as a slash, so "/\evil.com" means "//evil.com")
+const safeNext = (v: string | null) => (v && /^\/(?![/\\])/.test(v) && !/[\\\r\n\t]/.test(v) ? v : "/");
 
 function LoginForm() {
   const params = useSearchParams();

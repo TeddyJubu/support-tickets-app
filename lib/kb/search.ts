@@ -29,7 +29,7 @@ export interface KbSearchOutcome {
   mode: "hybrid" | "keyword" | "unavailable";
 }
 
-let cached: { db: DatabaseSync; ino: number; mtimeMs: number } | null = null;
+let cached: { db: DatabaseSync; ino: number; mtimeMs: number; vectors: Array<{ id: number; v: Float32Array }> | null } | null = null;
 
 // Re-opens after a rebuild swapped the file
 function openIndex() {
@@ -38,7 +38,7 @@ function openIndex() {
   const st = statSync(path);
   if (cached && cached.ino === st.ino && cached.mtimeMs === st.mtimeMs) return cached.db;
   cached?.db.close();
-  cached = { db: new DatabaseSync(path, { readOnly: true }), ino: st.ino, mtimeMs: st.mtimeMs };
+  cached = { db: new DatabaseSync(path, { readOnly: true }), ino: st.ino, mtimeMs: st.mtimeMs, vectors: null };
   return cached.db;
 }
 
@@ -82,9 +82,13 @@ export async function searchKb(query: string, k = 5): Promise<KbSearchOutcome> {
       const qv = (await embed([q]))?.[0];
       if (qv) {
         const query32 = new Float32Array(qv);
-        const all = db.prepare(`SELECT id, embedding FROM chunks`).all() as Array<{ id: number; embedding: Uint8Array }>;
-        const ranked = all
-          .map((r) => ({ id: Number(r.id), s: cosine(query32, fromBlob(r.embedding)) }))
+        // Loaded once per index file (a rebuild swaps the file and reopens the cache)
+        cached!.vectors ??= (db.prepare(`SELECT id, embedding FROM chunks`).all() as Array<{ id: number; embedding: Uint8Array }>).map((r) => ({
+          id: Number(r.id),
+          v: new Float32Array(fromBlob(r.embedding)),
+        }));
+        const ranked = cached!.vectors
+          .map((r) => ({ id: r.id, s: cosine(query32, r.v) }))
           .sort((a, b) => b.s - a.s)
           .slice(0, POOL);
         fuse(ranked.map((r) => r.id));

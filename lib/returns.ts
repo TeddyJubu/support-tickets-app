@@ -1,6 +1,7 @@
 // Simulated returns and exchanges (the Redo stand-in). Only shown for an order that belongs
 // to the ticket's own customer, the same rule the Shopify helpdesk's Redo worker uses.
 
+import { isoFromSql } from "./db";
 import { getDb } from "./sim-db";
 
 export const RETURN_STATUSES = ["requested", "label_sent", "in_transit", "received", "refunded", "exchanged", "rejected"] as const;
@@ -20,7 +21,7 @@ export interface SimReturn {
 }
 
 type Row = Record<string, unknown>;
-const iso = (v: unknown) => `${String(v).replace(" ", "T")}Z`;
+const iso = (v: unknown) => isoFromSql(v)!;
 const num = (v: unknown) => (v == null ? null : Number(v));
 
 const toReturn = (r: Row): SimReturn => ({

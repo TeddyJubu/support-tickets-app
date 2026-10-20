@@ -3,6 +3,7 @@
 // and their simulated orders are ever read; amounts the store doesn't have are null
 // ("unavailable"), never 0.
 
+import { isoFromSql } from "./db";
 import { getDb } from "./sim-db";
 import { getSimCustomerWithOrders, getSimOrderCustomerId, storeConfig } from "./store-d1.mjs";
 import { returnsForTicket, type SimReturn } from "./returns";
@@ -54,7 +55,7 @@ export interface RailResponse {
 type Row = Record<string, unknown>;
 const n = (v: unknown) => (v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v));
 const s = (v: unknown) => (v == null || v === "" ? null : String(v));
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 
 function toOrder(o: Row & { line_items: Row[]; fulfillments: Row[]; refunds: Row[] }): RailOrder {
   const refunds = o.refunds.map((r) => ({ amount: n(r.amount), note: s(r.note), at: s(r.created_at) }));

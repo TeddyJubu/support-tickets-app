@@ -34,20 +34,24 @@ const SELF_TALK_LINE = new RegExp(`^[\\s>*#\\-]*(?:${SELF_TALK.join("|")})`, "i"
 const VERBS = "switch|change|cancel|replace|ship|refund|credit|issue|process|create|invoice|prioritize|hold|flag|contact|notify|remove|add|apply|arrange|leave|correct|resolve";
 const PARTICIPLES =
   "switched|updated|changed|cancelled|canceled|replaced|shipped|sent|issued|processed|refunded|credited|created|prioritized|held|flagged|contacted|notified|removed|added|applied|arranged|left|corrected|resolved";
+// After "we can": only money and order changes count as a promise ("we can refund you")
+const CAN_VERBS = "refund|credit|issue|process|cancel|replace|invoice|prioritize|hold|remove|apply|arrange|resolve|change your order|change the order";
 const OBJECTS = "label|refund|credit|replacement|invoice|warehouse|order|shipment|package|address";
 const UPDATE = "update(?!\\s+(?:you|yourself|us|the\\s+customer)\\b)";
 const WHO = "(?:we|i|our team|the team|the store|store|warehouse|a human|human)";
 // First-person operational claims: the AI can't refund, cancel, ship or change anything
 const ACTION_CLAIM = new RegExp(
   [
-    `\\b${WHO}\\s+(?:can|could|will|would|have|has|already|just|are going to|is going to)\\s+(?:${VERBS}|${UPDATE})\\b`,
+    // "we can ship to Canada" states policy; "we will refund / have shipped" claims an action
+    `\\b${WHO}\\s+(?:will|would|have|has|already|just|are going to|is going to)\\s+(?:${VERBS}|${UPDATE})\\b`,
+    `\\b${WHO}\\s+(?:can|could)\\s+(?:${CAN_VERBS})\\b`,
     `\\b(?:we|i)\\s*['’](?:re|m) going to\\s+(?:${VERBS}|${UPDATE})\\b`,
     `\\b(?:we|i)\\s*['’](?:ll|ve)\\s+(?:${VERBS}|${UPDATE})\\b`,
     `\\b(?:we|i)\\s*['’]ll\\s+(?:get|have)\\s+(?:it|this|that|your(?:\\s+\\w+){0,3}|the(?:\\s+\\w+){0,3})\\s+(?:${PARTICIPLES})\\b`,
     `\\b(?:we|i)\\s*['’]ll\\s+take\\s+care\\s+of\\s+(?:it|this|that|your\\s+order)\\b`,
     `\\b(?:we|i|our team|the team)\\s+(?:have|has|just|already)\\s+(?:${PARTICIPLES})\\b`,
     `\\b(?:we|i)\\s*['\u2019]ve\\s+(?:just\\s+|already\\s+)?(?:${PARTICIPLES})\\b`,
-    `\\b${WHO}\\s+(?:will|would|are going to|is going to)\\s+send\\b[^.!?\\n]{0,80}\\b(?:prepaid\\s+|return\\s+)?(?:${OBJECTS})\\b`,
+    `\\b${WHO}\\s+(?:will|would|are going to|is going to)\\s+send\\b[^.!?\\n]{0,80}\\b(?:prepaid\\s+|return\\s+)?(?:${OBJECTS})\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,
     `\\b(?:your\\s+)?(?:refund|replacement|exchange|cancellation)\\s+(?:has\\s+been|is\\s+being|was)\\s+(?:issued|processed|approved|sent|completed)\\b`,
   ].join("|"),
   "i",

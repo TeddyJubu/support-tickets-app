@@ -8,7 +8,7 @@
 //      replies until a person checks and settles it.
 
 import { createHash, randomBytes } from "node:crypto";
-import { transaction } from "./db";
+import { transaction, isoFromSql, toSqlTime } from "./db";
 import { audit, type StaffUser } from "./auth";
 import { captureLesson } from "./learning";
 import { EmailNotSentError, sendEmail } from "./aws-email";
@@ -31,8 +31,8 @@ const REVIEW_MINUTES = 10;
 
 type Row = Record<string, unknown>;
 const sha = (v: string) => createHash("sha256").update(v).digest("hex");
-const sqlIn = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString().slice(0, 19).replace("T", " ");
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const sqlIn = (minutes: number) => toSqlTime(new Date(Date.now() + minutes * 60_000));
+const iso = isoFromSql;
 export const contentHash = (body: string) => sha(body.trim());
 
 // ---------- Read & write grant ----------
@@ -146,6 +146,8 @@ export async function confirmSend(input: {
     return { status: 409, code: "no_review", error: "Review the reply before sending it" };
   }
   if (String(review.expires_at) < nowSql() && !existing) return { status: 409, code: "review_expired", error: "The review expired. Review the reply again." };
+  // One review, one send: only a retry of the same send (same key) may come back with it
+  if (review.used_at != null && !existing) return { status: 409, code: "no_review", error: "This review was already used. Review the reply again." };
   if (review.content_hash !== contentHash(text)) return { status: 409, code: "changed_reply", error: "The reply changed after you reviewed it. Review it again." };
   const t = target(input.ticketId);
   if (!t) return { status: 404, code: "not_found", error: "Ticket not found" };
@@ -174,10 +176,17 @@ export async function confirmSend(input: {
 
   if (t.channel === "simulator") {
     // No external system: record the message and the intent together
-    const detail = transaction(d, () => {
-      d.prepare(`UPDATE sim_email_outbox SET status = 'sent', updated_at = datetime('now') WHERE idem_key = ?`).run(key);
-      return addSimMessage(input.ticketId, "agent", text, input.user.displayName);
-    });
+    let detail;
+    try {
+      detail = transaction(d, () => {
+        d.prepare(`UPDATE sim_email_outbox SET status = 'sent', updated_at = datetime('now') WHERE idem_key = ?`).run(key);
+        return addSimMessage(input.ticketId, "agent", text, input.user.displayName);
+      });
+    } catch (err) {
+      // Nothing left the server: free the key so the same send can be confirmed again
+      failEmailReply(key, err instanceof Error ? err.message : "Save failed");
+      return { status: 500, code: "not_sent", error: "The reply couldn't be saved. Confirm again to retry." };
+    }
     audit(input.user.username, "reply", input.ticketId, { channel: "simulated", key });
     captureLesson({ ticketId: input.ticketId, sendKey: key, finalText: text, actor: input.user.username });
     return { status: 201, detail: getSimTicketDetail(input.ticketId, input.user.id) ?? detail, channel: t.channel };

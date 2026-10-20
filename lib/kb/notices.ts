@@ -1,6 +1,7 @@
 // Notice Board: short, temporary store facts from the owner ("pickup closed Friday").
 // Active notices are given to the AI with every KB search and override KB articles.
 
+import { isoFromSql } from "../db";
 import { getDb, nowSql } from "../sim-db";
 import { audit } from "../auth";
 
@@ -16,7 +17,7 @@ export interface Notice {
 }
 
 type Row = Record<string, unknown>;
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 
 function toNotice(r: Row): Notice {
   const now = nowSql();

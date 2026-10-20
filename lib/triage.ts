@@ -2,7 +2,7 @@
 // One validated change set applies to one ticket or many (bulk), atomically, and every
 // change is written to the audit log.
 
-import { transaction } from "./db";
+import { toSqlTime, transaction } from "./db";
 import { audit } from "./auth";
 import { getDb, nowSql } from "./sim-db";
 import { PRIORITIES } from "./helpdesk-types";
@@ -33,7 +33,6 @@ const MAX_SNOOZE_DAYS = 90;
 
 const cleanTag = (t: unknown) =>
   typeof t === "string" ? t.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 40) : "";
-const toSql = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 
 /** Checks a change set from a request body; returns the cleaned changes or an error message */
 export function parseChanges(input: unknown): { changes: TicketChanges } | { error: string } {
@@ -79,7 +78,7 @@ export function parseChanges(input: unknown): { changes: TicketChanges } | { err
       if (Number.isNaN(when.getTime())) return { error: "snoozedUntil must be a date and time" };
       if (when.getTime() <= Date.now()) return { error: "Snooze until a time in the future" };
       if (when.getTime() > Date.now() + MAX_SNOOZE_DAYS * 86400e3) return { error: `Snooze for at most ${MAX_SNOOZE_DAYS} days` };
-      changes.snoozedUntil = toSql(when);
+      changes.snoozedUntil = toSqlTime(when);
     }
   }
   for (const key of ["read", "trashed", "spam"] as const) {

@@ -21,8 +21,8 @@ export const JOB_TIMEOUT_MS = 270_000;
 const MAX_HISTORY = 14;
 
 export class DraftError extends Error {
-  readonly kind: ErrorKind;
-  constructor(message: string, kind: ErrorKind) {
+  readonly kind: ErrorKind | "timeout";
+  constructor(message: string, kind: ErrorKind | "timeout") {
     super(message);
     this.kind = kind;
   }
@@ -102,12 +102,14 @@ async function converse(system: string, user: string, ctx: ToolContext, deadline
     });
     if (reply.tool_calls?.length) {
       messages.push({ role: "assistant", content: reply.content ?? "", tool_calls: reply.tool_calls });
-      for (const call of reply.tool_calls.slice(0, 4)) {
+      // Every tool_call needs a tool reply or the next request is invalid; only the first 4 run
+      for (const [i, call] of reply.tool_calls.entries()) {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(call.function.arguments || "{}");
         } catch {}
-        messages.push({ role: "tool", tool_call_id: call.id, content: await runTool(call.function.name, args, ctx) });
+        const content = i < 4 ? await runTool(call.function.name, args, ctx) : JSON.stringify({ error: "Too many lookups at once: ask again" });
+        messages.push({ role: "tool", tool_call_id: call.id, content });
       }
       continue;
     }
@@ -230,14 +232,22 @@ function saveDraft(
 /** Process a claimed job end to end, recording the outcome on the job */
 export async function processJob(job: Job): Promise<DraftOutcome | { state: "failed" | "retry_wait"; error: string }> {
   const db = getDb();
+  const attempt = draftForJob(job);
   try {
     const outcome = await Promise.race([
-      draftForJob(job),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new DraftError("Drafting timed out", "transient")), JOB_TIMEOUT_MS).unref()),
+      attempt,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new DraftError("Drafting timed out", "timeout")), JOB_TIMEOUT_MS).unref()),
     ]);
     if (outcome.state !== "done") finishJob(db, job.id, outcome.state, { reason: outcome.reason });
     return outcome;
   } catch (err) {
+    if (err instanceof DraftError && err.kind === "timeout") {
+      // Release the job first (a late draft then can't save), and only return once the old
+      // attempt has really stopped, so the worker never runs two drafts at once
+      const state = failJob(db, job.id, "transient", err.message);
+      await Promise.race([attempt.catch(() => {}), new Promise((r) => setTimeout(r, JOB_TIMEOUT_MS).unref())]);
+      return { state: state ?? "failed", error: err.message };
+    }
     const kind: ErrorKind = err instanceof DraftError || err instanceof AiError ? (err.kind as ErrorKind) : "invalid";
     const message = err instanceof Error ? err.message : String(err);
     // A crash after the draft was saved: keep it

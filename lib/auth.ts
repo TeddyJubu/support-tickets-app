@@ -3,7 +3,7 @@
 // cookie; only its SHA-256 is stored, so a copy of the database can't be used to log in.
 
 import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
-import { transaction } from "./db";
+import { toSqlTime, transaction } from "./db";
 import { getDb } from "./sim-db";
 
 export type StaffRole = "owner" | "agent";
@@ -161,14 +161,13 @@ export function login(username: string, password: string, ip: string): LoginResu
 
 // ---------- sessions ----------
 
-const sqlTime = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 
 export function createSession(userId: number) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + MAX_DAYS * 86400e3);
   getDb()
     .prepare(`INSERT INTO staff_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`)
-    .run(sha256(token), userId, sqlTime(expiresAt));
+    .run(sha256(token), userId, toSqlTime(expiresAt));
   return { token, expiresAt };
 }
 

@@ -115,3 +115,15 @@ test("heartbeat check: one alert when the worker stops, one when it's back", () 
   assert.match(out.stdout, /recovered/);
   assert.equal(raw.prepare(`SELECT count(*) AS c FROM alerts WHERE kind = 'worker_recovered'`).get().c, 1);
 });
+
+test("an alert interrupted mid-send is retried", async () => {
+  raw.exec(`UPDATE alerts SET status = 'sent' WHERE status != 'sent'`);
+  ticket("I will take legal action over this refund");
+  const id = raw.prepare(`SELECT id FROM alerts ORDER BY id DESC`).get().id;
+  raw.prepare(`UPDATE alerts SET status = 'sending', next_attempt_at = datetime('now', '-11 minutes') WHERE id = ?`).run(id);
+  process.env.ALERT_EMAIL = "owner@example.com";
+  const r = await alerts.deliverAlerts(async () => "<id@ses>");
+  assert.equal(r.sent, 1);
+  assert.equal(raw.prepare(`SELECT status FROM alerts WHERE id = ?`).get(id).status, "sent");
+  delete process.env.ALERT_EMAIL;
+});

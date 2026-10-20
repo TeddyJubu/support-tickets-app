@@ -2,7 +2,7 @@
 //   npm run worker                (systemd: support-tickets-worker.service)
 // One instance at a time (data/worker.lock), one job at a time. SIGTERM lets the current job
 // finish (up to the job timeout) before exiting. A job that times out keeps the worker from
-// claiming new work until the old attempt has really stopped.
+// claiming new work until the old attempt has really stopped (see processJob).
 
 import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

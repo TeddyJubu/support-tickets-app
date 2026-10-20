@@ -110,6 +110,8 @@ function TicketRow({
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={(e) => {
+        // Keys pressed on the bulk-select checkbox belong to the checkbox
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onSelect();

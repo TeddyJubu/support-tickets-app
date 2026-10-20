@@ -3,7 +3,7 @@
 // 1, 5 and 30 minutes, then stop as "failed" (staff can retry from the Alerts page).
 // Without ALERT_EMAIL alerts are kept in-app only ("skipped").
 
-import { transaction } from "./db";
+import { transaction, isoFromSql } from "./db";
 import { audit } from "./auth";
 import { sendEmail } from "./aws-email";
 import { getDb } from "./sim-db";
@@ -13,7 +13,7 @@ const RETRY_MINUTES = [1, 5, 30];
 const MAX_PER_HOUR = 30;
 
 type Row = Record<string, unknown>;
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 
 export const alertRecipients = () =>
   (process.env.ALERT_EMAIL ?? "")
@@ -60,6 +60,11 @@ export function listAlerts(offset = 0, limit = 25) {
 export async function deliverAlerts(send: typeof sendEmail = sendEmail) {
   const d = getDb();
   const recipients = alertRecipients();
+  // A send interrupted by a crash or restart: try it again (a possible duplicate beats a lost alert)
+  d.prepare(
+    `UPDATE alerts SET status = 'pending', last_error = 'Interrupted while sending: retrying'
+     WHERE status = 'sending' AND next_attempt_at < datetime('now', '-10 minutes')`,
+  ).run();
   const due = d
     .prepare(`SELECT * FROM alerts WHERE status = 'pending' AND next_attempt_at <= datetime('now') ORDER BY id LIMIT 20`)
     .all() as Row[];
@@ -78,7 +83,7 @@ export async function deliverAlerts(send: typeof sendEmail = sendEmail) {
       continue;
     }
     // Claim it, so the worker and the heartbeat check never send the same alert twice
-    const claimed = transaction(d, () => d.prepare(`UPDATE alerts SET status = 'sending', attempts = attempts + 1 WHERE id = ? AND status = 'pending'`).run(id).changes);
+    const claimed = transaction(d, () => d.prepare(`UPDATE alerts SET status = 'sending', attempts = attempts + 1, next_attempt_at = datetime('now') WHERE id = ? AND status = 'pending'`).run(id).changes);
     if (!claimed) continue;
     try {
       for (const to of recipients) await send({ to, subject: String(a.subject), text: String(a.body) });

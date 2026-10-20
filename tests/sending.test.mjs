@@ -259,3 +259,30 @@ test("staff can't bypass review through the messages route", async () => {
   const email = emailTicket();
   assert.equal((await call(messagesRoute.POST, { method: "POST", params: { id: email }, headers: cli, body: { author: "agent", body: "x" } })).status, 409);
 });
+
+test("a review can be used for one send only", async () => {
+  reset();
+  await enable();
+  const id = simTicket();
+  const r = (await reviewFor(id, "One review, one send.")).json;
+  assert.equal((await send(id, "One review, one send.", r.reviewToken, key(20))).status, 201);
+  const again = await send(id, "One review, one send.", r.reviewToken, key(21));
+  assert.equal(again.status, 409);
+  assert.equal(again.json.code, "no_review");
+  assert.equal(agentMessages(id), 1);
+});
+
+test("a simulated send that fails to save frees the send for a retry", async () => {
+  reset();
+  await enable();
+  const id = simTicket();
+  const k = key(22);
+  const r = (await reviewFor(id, "Saved on retry.")).json;
+  raw.exec(`CREATE TRIGGER fail_sim_agent BEFORE INSERT ON sim_messages WHEN NEW.author = 'agent' BEGIN SELECT RAISE(ABORT, 'locked'); END`);
+  const first = await send(id, "Saved on retry.", r.reviewToken, k);
+  raw.exec(`DROP TRIGGER fail_sim_agent`);
+  assert.equal(first.json.code, "not_sent");
+  assert.equal(simDb.getSimTicketDetail(id).pendingSend, null, "ticket not blocked");
+  assert.equal((await send(id, "Saved on retry.", r.reviewToken, k)).status, 201);
+  assert.equal(agentMessages(id), 1);
+});

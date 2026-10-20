@@ -71,3 +71,9 @@ export function transaction<T>(db: DatabaseSync, fn: () => T): T {
     depth.set(db, level);
   }
 }
+
+// SQLite's datetime('now') format is UTC "YYYY-MM-DD HH:MM:SS" without a zone marker
+export const toSqlTime = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+export const sqlNow = () => toSqlTime(new Date());
+/** A stored SQLite time as ISO 8601 (null stays null) */
+export const isoFromSql = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);

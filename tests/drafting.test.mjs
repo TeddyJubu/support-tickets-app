@@ -353,3 +353,35 @@ test("a sensitive KB article only marks the draft sensitive if the draft relied 
   const relied = await draftOne("Is shipping refunded if I send it back?", (t) => wrap(t, "Hi,\n\nShipping is refunded only for damaged items.", { kb_used: ["Refund Policy"] }));
   assert.equal(relied.detail.ai.draft.sensitive, true);
 });
+
+test("more than 4 parallel tool calls: every call gets a reply, only 4 run", async () => {
+  let sawTools = null;
+  clearQueue();
+  process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+  process.env.CLOUDFLARE_API_TOKEN = "token";
+  ai.setAiFetch(async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes("/run/")) return Response.json({ success: true, result: { data: body.text.map(() => new Array(1024).fill(0.01)) } });
+    const token = /<<<DRAFT (\w+)>>>/.exec(body.messages[0].content)[1];
+    const toolMsgs = body.messages.filter((m) => m.role === "tool");
+    if (!toolMsgs.length) {
+      const calls = Array.from({ length: 6 }, (_, i) => ({ id: `c${i}`, type: "function", function: { name: "search_kb", arguments: '{"query":"shipping"}' } }));
+      return Response.json({ choices: [{ message: { role: "assistant", content: "", tool_calls: calls } }] });
+    }
+    sawTools = toolMsgs.map((m) => m.tool_call_id);
+    return Response.json({ choices: [{ message: { role: "assistant", content: wrap(token, "Hi,\n\nShips in 2 days.") } }] });
+  });
+  const id = ticket("Many lookups: how long is shipping?");
+  const job = queue.claimNextJob(db, "t");
+  const outcome = await run.processJob(job);
+  assert.equal(outcome.state, "done");
+  assert.deepEqual(sawTools, ["c0", "c1", "c2", "c3", "c4", "c5"]);
+  void id;
+  ai.setAiFetch(null);
+});
+
+test("cleaner allows policy statements, still blocks promises", () => {
+  assert.equal(cleanDraft("Hi,\n\nYes, we can ship to Canada for about $35.", false).suppressed, false);
+  assert.equal(cleanDraft("Hi,\n\nWe can refund your order today.", false).suppressed, true);
+  assert.equal(cleanDraft("Hi,\n\nWe will refund you tomorrow.", false).suppressed, true);
+});

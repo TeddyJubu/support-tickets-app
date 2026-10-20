@@ -1,6 +1,7 @@
 // Read-only AI draft state (latest draft and job of a ticket). Takes the database handle so
 // lib/sim-db.ts can include it in ticket details without a circular import.
 
+import { isoFromSql } from "../db";
 import type { DatabaseSync } from "node:sqlite";
 
 export interface DraftInfo {
@@ -35,7 +36,7 @@ export interface AiDraftState {
 }
 
 type Row = Record<string, unknown>;
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 const json = <T>(v: unknown, fallback: T): T => {
   try {
     return v ? (JSON.parse(String(v)) as T) : fallback;

@@ -4,7 +4,7 @@
 // Simulator customers are pseudonyms. Real inbound email (app/api/helpdesk/inbound/ses)
 // also lands here, with the sender's real name and address.
 
-import { openDatabase, transaction } from "./db";
+import { isoFromSql, openDatabase, sqlNow, transaction } from "./db";
 import { SIM_MIGRATIONS } from "./sim-migrations";
 import { queueDraft } from "./drafting/queue";
 import { aiDraftState } from "./drafting/state";
@@ -27,7 +27,7 @@ export const getDb = () => openDatabase("sim.db", SIM_MIGRATIONS);
 
 const s = (v: unknown) => (v == null ? null : String(v));
 // SQLite datetime('now') is UTC without a zone marker; return ISO 8601
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 const n = (v: unknown) => (v == null ? 0 : Number(v));
 
 const secondsBetween = (a: unknown, b: unknown) =>
@@ -68,7 +68,7 @@ function toSummary(r: Row): TicketSummary {
 }
 
 /** SQLite's datetime('now') format, for comparing stored times in JS */
-export const nowSql = () => new Date().toISOString().slice(0, 19).replace("T", " ");
+export const nowSql = sqlNow;
 
 function toTicket(r: Row): Ticket {
   return {

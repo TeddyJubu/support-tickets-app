@@ -1,13 +1,14 @@
 // Numbers for the Overview page. Each part is computed on its own so one failure shows as
 // "unavailable" without hiding the rest.
 
+import { isoFromSql } from "./db";
 import { getDb } from "./sim-db";
 import { lessonStats } from "./learning";
 import { lastOpsStatus } from "./ops/monitor";
 import { queueStats } from "./drafting/queue";
 
 type Row = Record<string, unknown>;
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 
 function part<T>(fn: () => T): { ok: true; data: T } | { ok: false; error: string } {
   try {

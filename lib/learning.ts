@@ -5,14 +5,14 @@
 
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { transaction } from "./db";
+import { transaction, isoFromSql } from "./db";
 import { audit } from "./auth";
 import { getDb } from "./sim-db";
 import { kbDir } from "./kb/files";
 import { maskWithNames } from "./pii";
 
 type Row = Record<string, unknown>;
-const iso = (v: unknown) => (v == null ? null : `${String(v).replace(" ", "T")}Z`);
+const iso = isoFromSql;
 
 export interface Lesson {
   id: number;
