@@ -45,6 +45,21 @@ export function Avatar({
   );
 }
 
+// A little four-hole button, for Buttons Bebe
+export function BrandMark() {
+  return (
+    <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[oklch(0.6_0.2_320)] shadow-soft">
+      <svg viewBox="0 0 24 24" className="size-5 text-white" aria-hidden>
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+        <circle cx="9.5" cy="9.5" r="1.4" fill="currentColor" />
+        <circle cx="14.5" cy="9.5" r="1.4" fill="currentColor" />
+        <circle cx="9.5" cy="14.5" r="1.4" fill="currentColor" />
+        <circle cx="14.5" cy="14.5" r="1.4" fill="currentColor" />
+      </svg>
+    </div>
+  );
+}
+
 export const STATUS_META: Record<
   TicketStatus,
   { label: string; hint: string; dot: string; pill: string }

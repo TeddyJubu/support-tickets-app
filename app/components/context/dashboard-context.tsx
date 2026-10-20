@@ -77,6 +77,10 @@ function writePanel(panel: SidePanel | null) {
 // Message-IDs from real email aren't useful to show; replayed Gorgias ids are short
 const showSourceId = (id: string | null | undefined) => !!id && /^[\w-]{1,24}$/.test(id);
 
+// The session expired or was revoked: a full page load, so no customer data stays in memory
+// eslint-disable-next-line @next/next/no-location-assign-relative-destination
+const toSignIn = () => window.location.assign("/login");
+
 // Simulated tickets carry their full conversation
 function simMessages(detail: TicketDetail): TicketMessage[] {
   const { ticket } = detail;
@@ -248,6 +252,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         params.set("status", statusRef.current);
       }
       const res = await fetch(`/api/helpdesk/tickets?${params}`);
+      if (res.status === 401) toSignIn();
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as TicketListResponse;
       if (!current()) return [];
@@ -287,6 +292,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       setDetailError(null);
       try {
         const res = await fetch(`/api/helpdesk/tickets/${id}`);
+        if (res.status === 401) toSignIn();
         if (!res.ok) throw new Error(res.status === 404 ? "Ticket not found" : `HTTP ${res.status}`);
         const detail = (await res.json()) as TicketDetail;
         if (request !== detailRequest.current) return;

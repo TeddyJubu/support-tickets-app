@@ -1,4 +1,5 @@
 import { setSimTicketStatus } from "@/lib/sim-db";
+import { isAgentRequest, unauthorized } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  if (!isAgentRequest(request)) return unauthorized();
   const { id } = await params;
   const body = (await request.json().catch(() => ({}))) as { status?: string };
   if (!body.status || !["open", "pending", "closed"].includes(body.status)) {
