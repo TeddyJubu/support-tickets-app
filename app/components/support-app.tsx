@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
+import type { SignedInAgent } from "@/lib/auth";
 import type { StoreSettings } from "@/lib/settings";
 import { DashboardProvider } from "./context/dashboard-context";
 import { StoreProvider } from "./context/store-context";
@@ -39,9 +40,9 @@ function Workspace() {
 }
 
 // The copilot's instructions come from the server (app/api/chat/route.ts); the browser only adds ticket context
-export function SupportApp({ store }: { store: StoreSettings }) {
+export function SupportApp({ store, agent }: { store: StoreSettings; agent: SignedInAgent | null }) {
   return (
-    <StoreProvider store={store}>
+    <StoreProvider store={store} agent={agent}>
       <DashboardProvider>
         <CopilotProvider runtimeUrl="/api/chat" streaming={true} maxIterations={4}>
           <TicketingTools />

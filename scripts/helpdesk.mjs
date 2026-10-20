@@ -15,15 +15,19 @@
 //   products <query> | customers <query>   search the store export
 //   restart                         rebuild + restart the production service
 //   logs [N]                        last N lines of the service log (default 50)
-//   set-password                    set the web sign-in password (signs everyone out)
+//   agent add <email> <name> [--admin]   give someone their own sign-in (prompts for a password)
+//   agent list | agent disable <email> | agent enable <email> | agent password <email>
+//   set-password                    shared sign-in password, only until the first agent exists
 //
 // Talks to the running helpdesk (SIM_HELPDESK_URL, default http://127.0.0.1:3100)
-// using SIM_API_KEY from .env.local. Never prints secret values.
+// using SIM_API_KEY from .env.local; `agent` edits data/sim.db directly. Never prints secret values.
 
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomBytes, scryptSync } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import * as agents from "../lib/agents.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const envFile = join(root, ".env.local");
@@ -230,6 +234,52 @@ const commands = {
     console.log(sh("sudo", ["journalctl", "-u", "support-tickets", "-n", String(Number(n) || 50), "--no-pager", "-o", "cat"]));
   },
 
+  // Agent accounts, straight in data/sim.db (works whether or not the site is running).
+  // Disabling an agent or changing their password signs them out on their next request.
+  async agent(action = need(rest[0], "agent add|list|disable|enable|password")) {
+    const db = new DatabaseSync(join(root, "data/sim.db"));
+    db.exec("PRAGMA busy_timeout = 5000;");
+    agents.ensureAgentsTable(db);
+    const email = rest[1];
+    const show = (a) => `${a.email}  ${a.name}  ${a.role}${a.disabled ? "  DISABLED" : ""}`;
+    const newPassword = async () => {
+      const password = await readSecret("Password (12+ characters): ");
+      if (process.stdin.isTTY && (await readSecret("Repeat it: ")) !== password) {
+        throw new Error("The passwords don't match.");
+      }
+      return password;
+    };
+    if (action === "list") {
+      const list = agents.listAgents(db);
+      return out({ agents: list }, () => list.map(show).join("\n") || "no agents yet: the shared password (set-password) signs in");
+    }
+    if (action === "add") {
+      const name = need(rest.slice(2).join(" "), "agent add <email> <name> [--admin]");
+      const first = agents.agentCount(db) === 0;
+      const agent = agents.addAgent(db, { email, name, role: argv.includes("--admin") ? "admin" : "agent", password: await newPassword() });
+      // Sessions are signed with SESSION_SECRET: create one on a fresh install (never printed)
+      const newSecret = !env.SESSION_SECRET;
+      if (newSecret) writeEnv({ SESSION_SECRET: randomBytes(32).toString("base64url") });
+      return out({ agent }, () =>
+        [
+          `Added ${show(agent)}`,
+          first ? "That was the first agent: the shared password no longer signs in; everyone uses their own email." : "",
+          newSecret ? "Created SESSION_SECRET in .env.local. Apply it with: npm run helpdesk -- restart" : "",
+        ].filter(Boolean).join("\n"),
+      );
+    }
+    need(email, `agent ${action} <email>`);
+    if (action === "password") {
+      const agent = agents.setAgentPassword(db, email, await newPassword());
+      return out({ agent }, () => `New password set for ${agent.email}; their other sessions are signed out.`);
+    }
+    if (action === "disable" || action === "enable") {
+      const agent = agents.setAgentDisabled(db, email, action === "disable");
+      return out({ agent }, () => `${show(agent)}${action === "disable" ? " (signed out)" : ""}`);
+    }
+    throw new Error("agent add|list|disable|enable|password");
+  },
+
   // Web sign-in: saves only a scrypt hash of the password, plus a new SESSION_SECRET
   // (which signs everyone out). Prompts without echo, or reads one line from stdin.
   async "set-password"() {
@@ -243,17 +293,24 @@ const commands = {
       process.exit(2);
     }
     const salt = randomBytes(16);
-    let text = "";
-    try {
-      text = readFileSync(envFile, "utf8");
-    } catch {}
-    text = setEnvLine(text, "HELPDESK_PASSWORD_HASH", `scrypt:${salt.toString("hex")}:${scryptSync(password, salt, 64).toString("hex")}`);
-    text = setEnvLine(text, "SESSION_SECRET", randomBytes(32).toString("base64url"));
-    writeFileSync(envFile, text);
-    chmodSync(envFile, 0o600); // it holds secrets: owner only
+    writeEnv({
+      HELPDESK_PASSWORD_HASH: `scrypt:${salt.toString("hex")}:${scryptSync(password, salt, 64).toString("hex")}`,
+      SESSION_SECRET: randomBytes(32).toString("base64url"),
+    });
     console.log("Saved to .env.local. Apply it with: npm run helpdesk -- restart");
   },
 };
+
+// Sets keys in .env.local, keeping everything else; the file holds secrets, so owner-only
+function writeEnv(values) {
+  let text = "";
+  try {
+    text = readFileSync(envFile, "utf8");
+  } catch {}
+  for (const [key, value] of Object.entries(values)) text = setEnvLine(text, key, value);
+  writeFileSync(envFile, text);
+  chmodSync(envFile, 0o600);
+}
 
 function setEnvLine(text, key, value) {
   const line = new RegExp(`^\\s*${key}\\s*=.*$`, "m");
@@ -300,7 +357,8 @@ async function setStatus(id, status) {
 }
 
 if (!command || !commands[command]) {
-  console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  const header = readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1);
+  console.log(header.slice(0, header.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
   process.exit(command ? 2 : 0);
 }
 commands[command]().catch((err) => {

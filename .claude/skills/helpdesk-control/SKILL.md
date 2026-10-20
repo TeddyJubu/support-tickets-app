@@ -25,7 +25,9 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 | Search the catalog / customers (export) | `npm run helpdesk -- products tulle dress` · `customers cohen` |
 | Rebuild and restart the live site | `npm run helpdesk -- restart` |
 | Service logs | `npm run helpdesk -- logs 100` |
-| Set the web sign-in password (signs everyone out) | `npm run helpdesk -- set-password`, then `restart` |
+| Give someone a sign-in (prompts for their password; ask the user to type it) | `npm run helpdesk -- agent add <email> <name> [--admin]` |
+| List / disable / enable agents, reset a password | `npm run helpdesk -- agent list` · `agent disable <email>` · `agent enable <email>` · `agent password <email>` |
+| Shared sign-in password (only before the first agent exists) | `npm run helpdesk -- set-password`, then `restart` |
 | Back up the databases now / check a backup | `npm run backup` · `npm run backup -- verify data/backups/sim-<time>.db.gz` |
 
 ## Customer simulator

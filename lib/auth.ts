@@ -1,20 +1,31 @@
-import { createHmac, scrypt, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { isSimulatorRequest } from "./sim-auth";
+import { getDb } from "./sim-db";
+import { storeSettings } from "./settings";
+import { agentCount, getAgent, verifyPassword } from "./agents.mjs";
 
 export { unauthorized } from "./sim-auth";
 
-// Agent sign-in: one shared password, stored as a scrypt hash in HELPDESK_PASSWORD_HASH
-// (`npm run helpdesk -- set-password` writes it), and a stateless session cookie signed
-// with SESSION_SECRET. The cookie names its user (`sub`) so per-user accounts can follow.
+// Agent sign-in. Each agent has their own account (lib/agents.mjs, managed with
+// `npm run helpdesk -- agent …`). Until the first agent exists, one shared password
+// (HELPDESK_PASSWORD_HASH, set with `npm run helpdesk -- set-password`) signs in instead.
+// The session cookie is stateless, signed with SESSION_SECRET, and names the agent; every
+// request re-checks the agent, so disabling one or changing their password signs them out.
 // Changing SESSION_SECRET signs everyone out.
 
 export const SESSION_COOKIE = "hd_session";
 export const SESSION_TTL_SECONDS = 12 * 60 * 60;
 
-type Session = { sub: string; exp: number };
+// sub is "agent:<id>" (v = the agent's session_version), or "shared" for the shared password
+type Session = { sub: string; exp: number; v?: number };
 
-const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
+export interface SignedInAgent {
+  /** null when signed in with the shared password */
+  id: string | null;
+  name: string;
+  email: string | null;
+  role: "admin" | "agent";
+}
 
 function sessionSecret() {
   const secret = process.env.SESSION_SECRET ?? "";
@@ -26,18 +37,22 @@ const sign = (data: string, secret: string) => createHmac("sha256", secret).upda
 const safeEqual = (a: string, b: string) =>
   a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-export const loginConfigured = () =>
-  Boolean(sessionSecret()) && (process.env.HELPDESK_PASSWORD_HASH ?? "").startsWith("scrypt:");
+const sharedPasswordSet = () => (process.env.HELPDESK_PASSWORD_HASH ?? "").startsWith("scrypt:");
 
-export function createSessionToken(sub: string) {
+// Agents exist: sign in with email + password. None yet: the shared password, if set.
+export const agentsExist = () => agentCount(getDb()) > 0;
+
+export const loginConfigured = () => Boolean(sessionSecret()) && (agentsExist() || sharedPasswordSet());
+
+export function createSessionToken(sub: string, v?: number) {
   const secret = sessionSecret();
   if (!secret) throw new Error("SESSION_SECRET is not set");
-  const session: Session = { sub, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS };
+  const session: Session = { sub, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS, ...(v ? { v } : {}) };
   const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
   return `${payload}.${sign(payload, secret)}`;
 }
 
-export function readSession(token: string | undefined): Session | null {
+function readSession(token: string | undefined): Session | null {
   const secret = sessionSecret();
   if (!secret || !token) return null;
   const [payload, mac, ...extra] = token.split(".");
@@ -50,25 +65,36 @@ export function readSession(token: string | undefined): Session | null {
   }
 }
 
-function sessionFrom(request: Request) {
+// The agent a session cookie belongs to, if it is still valid
+export function agentFromSessionToken(token: string | undefined): SignedInAgent | null {
+  const session = readSession(token);
+  if (!session) return null;
+  if (session.sub.startsWith("agent:")) {
+    const agent = getAgent(getDb(), session.sub.slice("agent:".length));
+    if (!agent || agent.disabled || agent.sessionVersion !== session.v) return null;
+    return { id: agent.id, name: agent.name, email: agent.email, role: agent.role };
+  }
+  // "agent" is the shared-password cookie from before agent accounts existed
+  if ((session.sub === "shared" || session.sub === "agent") && sharedPasswordSet() && !agentsExist()) {
+    return { id: null, name: storeSettings().senderName, email: null, role: "admin" };
+  }
+  return null;
+}
+
+export function currentAgent(request: Request) {
   const prefix = `${SESSION_COOKIE}=`;
   const cookie = (request.headers.get("cookie") ?? "").split(/;\s*/).find((c) => c.startsWith(prefix));
-  return readSession(cookie?.slice(prefix.length));
+  return agentFromSessionToken(cookie?.slice(prefix.length));
 }
 
 // A signed-in agent, or the operator CLI / simulator with Bearer SIM_API_KEY.
 // proxy.ts checks this for every request; route handlers check it again in case the proxy is bypassed.
-export const isAgentRequest = (request: Request) => Boolean(sessionFrom(request)) || isSimulatorRequest(request);
+export const isAgentRequest = (request: Request) => Boolean(currentAgent(request)) || isSimulatorRequest(request);
 
 // Where to go after signing in: only a path on this site, never another origin
 export const safeNextPath = (value: unknown) =>
   typeof value === "string" && /^\/(?![/\\])[^\u0000-\u001f\u007f]*$/.test(value) ? value : "/";
 
-// HELPDESK_PASSWORD_HASH is scrypt:<salt hex>:<key hex> (Node's scrypt defaults)
-export async function passwordMatches(password: string) {
-  const [scheme, salt, key] = (process.env.HELPDESK_PASSWORD_HASH ?? "").split(":");
-  const expected = Buffer.from(key ?? "", "hex");
-  if (scheme !== "scrypt" || !salt || expected.length < 32) return false;
-  const actual = await scryptAsync(password, Buffer.from(salt, "hex"), expected.length);
-  return timingSafeEqual(actual, expected);
-}
+// The shared password (HELPDESK_PASSWORD_HASH), used only until the first agent exists
+export const sharedPasswordMatches = (password: string) =>
+  verifyPassword(process.env.HELPDESK_PASSWORD_HASH, password);

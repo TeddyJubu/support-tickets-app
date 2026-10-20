@@ -67,7 +67,7 @@ This is a standalone copy of `examples/support-tickets-demo` from the [Copilot S
 ```bash
 npm install
 cp .env.example .env.local   # then add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
-npm run helpdesk -- set-password   # the password you sign in with
+npm run helpdesk -- agent add you@example.com "Your Name" --admin   # your sign-in
 npm run dev
 ```
 
@@ -86,7 +86,7 @@ This writes `data/helpdesk.db` using Node's built-in `node:sqlite` (Node 22+). `
 
 The Gorgias export contains ticket metadata (subject, tags, intent, timing, message counts) but no message bodies, so the conversation view and the AI work from that metadata.
 
-Every page and API route requires signing in (`proxy.ts`, `lib/auth.ts`): one shared password, set with `npm run helpdesk -- set-password`, and a 12-hour session cookie. The simulator and the control CLI use `Bearer SIM_API_KEY` instead; the SES webhook checks its own token. Search engines are also blocked via `robots.txt`, a `noindex` robots meta tag and an `X-Robots-Tag` header on every response.
+Every page and API route requires signing in (`proxy.ts`, `lib/auth.ts`): each agent has their own email and password (`npm run helpdesk -- agent add|list|disable|password`), with a 12-hour session cookie. Before the first agent exists, a shared password from `npm run helpdesk -- set-password` works instead. The simulator and the control CLI use `Bearer SIM_API_KEY` instead; the SES webhook checks its own token. Search engines are also blocked via `robots.txt`, a `noindex` robots meta tag and an `X-Robots-Tag` header on every response.
 
 ## Customer Simulator
 
@@ -125,7 +125,8 @@ The chat route (`app/api/chat/route.ts`) calls [Cloudflare Workers AI](https://d
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID (required)                                |
 | `CLOUDFLARE_API_TOKEN`  | API token with Workers AI permission (required)                      |
 | `CF_MODEL`              | Workers AI model with function calling, default `@cf/zai-org/glm-5.3-flash` |
-| `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET` | Web sign-in (required); set both with `npm run helpdesk -- set-password` |
+| `SESSION_SECRET` | Signs session cookies (required); `agent add` creates it |
+| `HELPDESK_PASSWORD_HASH` | Shared password, only until the first agent exists (`set-password`) |
 
 See the [Workers AI model catalog](https://developers.cloudflare.com/workers-ai/models/) for other models that support function calling.
 

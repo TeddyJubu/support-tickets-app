@@ -433,7 +433,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
             {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ author: "agent", body: content, sender: "You", idempotencyKey }),
+              // The server records the signed-in agent as the sender
+              body: JSON.stringify({ author: "agent", body: content, idempotencyKey }),
             },
           );
           if (!res.ok) {

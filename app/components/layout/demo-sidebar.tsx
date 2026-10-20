@@ -20,7 +20,7 @@ import {
 import { formatRelative } from "@/lib/helpdesk-format";
 import type { TicketSummary } from "@/lib/helpdesk-types";
 import { useDashboard, type StatusFilter } from "../context/dashboard-context";
-import { useStore } from "../context/store-context";
+import { useAgent, useStore } from "../context/store-context";
 import { Avatar, BrandMark, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
 import type { TicketStatus } from "../types";
 
@@ -178,6 +178,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
     setStatusFilter,
   } = useDashboard();
   const store = useStore();
+  const agent = useAgent();
 
   // Load the next page when the end of the list scrolls into view
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -397,7 +398,12 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
           Shortcuts
           <Kbd>?</Kbd>
         </button>
-        <div className="ml-auto flex items-center">
+        <div className="ml-auto flex min-w-0 items-center">
+          {agent && (
+            <span className="truncate px-1.5 text-xs text-muted-foreground" title={agent.email ?? "Shared sign-in"}>
+              {agent.name}
+            </span>
+          )}
           <ThemeToggle />
           <form method="post" action="/api/auth/logout">
             <IconButton label="Sign out" type="submit">

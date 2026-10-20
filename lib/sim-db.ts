@@ -15,12 +15,14 @@ import type {
   TicketSummary,
 } from "./helpdesk-types";
 import { storeSettings } from "./settings";
+import { ensureAgentsTable } from "./agents.mjs";
 
 type Row = Record<string, unknown>;
 
+// Also holds agent accounts (lib/agents.mjs), read by lib/auth.ts
 let db: DatabaseSync | null = null;
 
-function getDb() {
+export function getDb() {
   if (db) return db;
   db = new DatabaseSync(join(process.cwd(), "data/sim.db"));
   db.exec(`
@@ -80,6 +82,10 @@ function getDb() {
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Which signed-in agent wrote a message (null for the simulator, the CLI and the shared password)
+  const messageCols = db.prepare(`PRAGMA table_info(sim_messages)`).all() as Row[];
+  if (!messageCols.some((c) => c.name === "agent_id")) db.exec(`ALTER TABLE sim_messages ADD COLUMN agent_id TEXT`);
+  ensureAgentsTable(db);
   return db;
 }
 
@@ -352,12 +358,13 @@ export function addSimMessage(
   author: "customer" | "agent" | "system",
   body: string,
   sender?: string | null,
+  agentId?: string | null,
 ) {
   const d = getDb();
   const ticket = d.prepare(`SELECT * FROM sim_tickets WHERE id = ?`).get(ticketId) as Row | undefined;
   if (!ticket) return null;
-  d.prepare(`INSERT INTO sim_messages (ticket_id, author, sender, body) VALUES (?,?,?,?)`).run(
-    ticketId, author, sender ?? null, body,
+  d.prepare(`INSERT INTO sim_messages (ticket_id, author, sender, body, agent_id) VALUES (?,?,?,?,?)`).run(
+    ticketId, author, sender ?? null, body, agentId ?? null,
   );
   if (author === "agent") {
     d.prepare(
@@ -489,7 +496,14 @@ export function failEmailReply(key: string, error: string) {
 }
 
 // After SES accepted the reply: mark it sent and add the agent message together
-export function completeEmailReply(key: string, ticketId: string, messageId: string, body: string, sender: string) {
+export function completeEmailReply(
+  key: string,
+  ticketId: string,
+  messageId: string,
+  body: string,
+  sender: string,
+  agentId: string | null = null,
+) {
   const d = getDb();
   d.exec("SAVEPOINT complete_email_reply");
   try {
@@ -501,7 +515,7 @@ export function completeEmailReply(key: string, ticketId: string, messageId: str
       .run(messageId, key);
     if (res.changes === 0) throw new Error("Outbox row missing or already sent");
     recordEmailId(messageId, ticketId);
-    const detail = addSimMessage(ticketId, "agent", body, sender);
+    const detail = addSimMessage(ticketId, "agent", body, sender, agentId);
     if (!detail) throw new Error(`Ticket ${ticketId} not found`);
     d.exec("RELEASE complete_email_reply");
     return detail;

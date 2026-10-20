@@ -12,7 +12,7 @@ npm run helpdesk -- tickets             # simulated tickets
 npm run helpdesk -- show SIM-1009       # read one
 npm run simulate -- --count 3           # 3 simulated customers order and open tickets
 npm run helpdesk -- restart             # after code changes: build + restart the live site
-npm run helpdesk -- set-password        # web sign-in password (then restart)
+npm run helpdesk -- agent add <email> <name>   # someone's own sign-in (agent list|disable|password)
 ```
 
 Hard rules:

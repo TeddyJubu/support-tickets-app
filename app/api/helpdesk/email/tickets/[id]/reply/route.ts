@@ -1,6 +1,6 @@
 import { claimEmailReply, completeEmailReply, emailThread, failEmailReply } from "@/lib/sim-db";
 import { EmailNotSentError, sendEmail } from "@/lib/aws-email";
-import { isAgentRequest, unauthorized } from "@/lib/auth";
+import { currentAgent, isAgentRequest, unauthorized } from "@/lib/auth";
 import { storeSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
@@ -55,7 +55,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    return Response.json(completeEmailReply(key, id, messageId, text, storeSettings().senderName), { status: 201 });
+    // The customer sees the store's sender name; the ticket records which agent wrote it
+    const agent = currentAgent(request);
+    const sender = agent?.name ?? storeSettings().senderName;
+    return Response.json(completeEmailReply(key, id, messageId, text, sender, agent?.id), { status: 201 });
   } catch (err) {
     console.error(`email reply ${key} on ${id}: sent as ${messageId} but not saved`, err);
     return Response.json(

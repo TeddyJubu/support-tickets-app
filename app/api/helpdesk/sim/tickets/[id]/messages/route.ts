@@ -1,5 +1,5 @@
 import { addSimMessage } from "@/lib/sim-db";
-import { isAgentRequest } from "@/lib/auth";
+import { currentAgent, isAgentRequest } from "@/lib/auth";
 import { isSimulatorRequest, unauthorized } from "@/lib/sim-auth";
 
 export const runtime = "nodejs";
@@ -22,7 +22,10 @@ export async function POST(
     return Response.json({ error: "author must be agent or customer" }, { status: 400 });
   }
   if (!(author === "customer" ? isSimulatorRequest(request) : isAgentRequest(request))) return unauthorized();
-  const detail = addSimMessage(id, author, body.body.slice(0, 10000), body.sender ?? null);
+  // A signed-in agent's reply carries their own name; only the simulator and CLI name the sender
+  const agent = author === "agent" ? currentAgent(request) : null;
+  const sender = agent ? agent.name : (body.sender?.slice(0, 100) ?? null);
+  const detail = addSimMessage(id, author, body.body.slice(0, 10000), sender, agent?.id);
   if (!detail) return Response.json({ error: "Ticket not found" }, { status: 404 });
   return Response.json(detail, { status: 201 });
 }

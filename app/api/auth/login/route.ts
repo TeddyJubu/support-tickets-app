@@ -1,11 +1,14 @@
 import {
+  agentsExist,
   createSessionToken,
   loginConfigured,
-  passwordMatches,
   safeNextPath,
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
+  sharedPasswordMatches,
 } from "@/lib/auth";
+import { getDb } from "@/lib/sim-db";
+import { agentLogin, decoyPasswordHash, verifyPassword } from "@/lib/agents.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +20,17 @@ const WINDOW_MS = 15 * 60 * 1000;
 
 const seeOther = (location: string, headers: Record<string, string> = {}) =>
   new Response(null, { status: 303, headers: { location, ...headers } });
+
+// Who the form's email + password sign in as, or null. Before any agent exists, only the
+// shared password works (and the email is ignored).
+async function signIn(email: unknown, password: string): Promise<{ sub: string; v?: number } | null> {
+  if (!agentsExist()) return (await sharedPasswordMatches(password)) ? { sub: "shared" } : null;
+  const found = typeof email === "string" ? agentLogin(getDb(), email.slice(0, 320)) : null;
+  // Check a decoy hash for unknown emails, so they take as long as a wrong password
+  const ok = await verifyPassword(found?.passwordHash ?? decoyPasswordHash(), password);
+  if (!ok || !found || found.agent.disabled) return null;
+  return { sub: `agent:${found.agent.id}`, v: found.agent.sessionVersion };
+}
 
 // The /login form posts here; success sets the session cookie and returns to `next`
 export async function POST(request: Request) {
@@ -32,7 +46,8 @@ export async function POST(request: Request) {
   if (active && active.count >= MAX_FAILURES) return back("locked");
 
   const password = form?.get("password");
-  if (typeof password !== "string" || !(await passwordMatches(password.slice(0, 1000)))) {
+  const session = typeof password === "string" ? await signIn(form?.get("email"), password.slice(0, 1000)) : null;
+  if (!session) {
     failures.set(ip, { count: (active?.count ?? 0) + 1, until: active?.until ?? now + WINDOW_MS });
     if (failures.size > 10_000) for (const [key, f] of failures) if (f.until <= now) failures.delete(key);
     return back("invalid");
@@ -40,7 +55,7 @@ export async function POST(request: Request) {
   failures.delete(ip);
 
   const cookie = [
-    `${SESSION_COOKIE}=${createSessionToken("agent")}`,
+    `${SESSION_COOKIE}=${createSessionToken(session.sub, session.v)}`,
     "Path=/",
     `Max-Age=${SESSION_TTL_SECONDS}`,
     "HttpOnly",

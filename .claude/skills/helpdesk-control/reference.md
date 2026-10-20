@@ -23,7 +23,11 @@ scripts/backup-db.mjs ──▶ data/backups/*.db.gz ──▶ S3-compatible buc
 
 ## Sign-in
 
-`proxy.ts` sends every request without a valid session to `/login` (pages) or answers 401 (API); the route handlers check again with `isAgentRequest` (`lib/auth.ts`). A session is an HttpOnly, SameSite=Lax cookie `hd_session` (Secure in production) signed with `SESSION_SECRET`, valid 12 hours. There is one shared password (`HELPDESK_PASSWORD_HASH`, scrypt). `npm run helpdesk -- set-password` sets it and rotates `SESSION_SECRET`, which signs everyone out; restart to apply. `Bearer SIM_API_KEY` counts as the operator, so the CLI and simulator work without a session. Sign-in allows 10 failed attempts per IP per 15 minutes.
+`proxy.ts` sends every request without a valid session to `/login` (pages) or answers 401 (API); the route handlers check again with `isAgentRequest` (`lib/auth.ts`). A session is an HttpOnly, SameSite=Lax cookie `hd_session` (Secure in production) signed with `SESSION_SECRET`, valid 12 hours, naming the agent.
+
+Each agent has their own account (email + password) in the `agents` table of `data/sim.db` (`lib/agents.mjs`), managed with `npm run helpdesk -- agent add|list|disable|enable|password` (no restart needed). Every request re-checks the agent, so `disable` or `password` signs them out at once. Replies record the agent's name (`sim_messages.sender`) and id (`sim_messages.agent_id`); email to customers still comes from the store's sender name. Until the first agent exists, one shared password (`HELPDESK_PASSWORD_HASH`) signs in instead: `set-password` sets it and rotates `SESSION_SECRET` (signs everyone out; restart to apply). Creating the first agent switches the shared password off for good. `agent add` creates `SESSION_SECRET` if it's missing (restart to apply).
+
+`Bearer SIM_API_KEY` counts as the operator, so the CLI and simulator work without a session. Sign-in allows 10 failed attempts per IP per 15 minutes.
 
 ## HTTP API (127.0.0.1:3100 or the public site)
 
@@ -56,7 +60,8 @@ Ticket status: a customer message sets `open`, an agent reply sets `pending`, cl
 | `STORE_NAME`, `STORE_DESCRIPTION`, `SUPPORT_EMAIL`, `SENDER_NAME` | this install's store (`lib/settings.ts`): UI name, AI prompt, support address, email display name. Defaults are the demo install's (Cute Things); set them for every new store |
 | `OUTBOUND_EMAIL_FROM` (optional) | full From header for replies, default `<SENDER_NAME> <SUPPORT_EMAIL>` |
 | `SIM_API_KEY` | simulator write access; also the operator CLI's API access |
-| `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET` | web sign-in; set both with `npm run helpdesk -- set-password` |
+| `SESSION_SECRET` | signs session cookies; created by `agent add` or `set-password` |
+| `HELPDESK_PASSWORD_HASH` | shared password, only until the first agent exists (`set-password`) |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |
 | `SHOP_SIM_ACCOUNT_ID`, `SHOP_D1_DATABASE_ID`, `SHOP_D1_TOKEN` | demo store D1 access (token "helpdesk shop-sim deploy", has D1: Edit) |
 | `BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` (optional) | off-box backups: bucket URL (R2: `https://<account>.r2.cloudflarestorage.com/<bucket>`) and its S3 API keys. Without them backups stay on this machine |
@@ -109,7 +114,8 @@ Email that arrived after the backup isn't in the restored DB. SES also writes ea
 | simulator: `Store database: … not authorized` | the D1 token lost access; it needs Account → D1 → Edit on the account |
 | simulator: `Workers AI` errors / slow | model quota or outage; try `--no-orders --count 1`, or set `CF_MODEL` |
 | chat returns errors | `GET /api/chat` (signed in, or with `Bearer SIM_API_KEY`) shows provider + model; check Workers AI keys |
-| sign-in says "isn't set up" | `grep -c '^HELPDESK_PASSWORD_HASH=\|^SESSION_SECRET=' .env.local` should be 2; ask the user to run `npm run helpdesk -- set-password`, then restart |
+| sign-in says "isn't set up" | `grep -c '^SESSION_SECRET=' .env.local` should be 1, and `npm run helpdesk -- agent list` should show an agent (or `HELPDESK_PASSWORD_HASH` be set); ask the user to run `agent add`, then restart |
+| an agent can't sign in | `npm run helpdesk -- agent list`: check the email and that they aren't DISABLED; the user resets it with `agent password <email>` |
 | sign-in says "Too many attempts" | 10 failures from one IP in 15 minutes; wait, or restart the service to clear it |
 | everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |
 | UI doesn't show new SIM tickets | the Simulated tab polls every 10 s; confirm with `npm run helpdesk -- tickets` |

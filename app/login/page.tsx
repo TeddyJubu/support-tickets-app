@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { readSession, safeNextPath, SESSION_COOKIE } from "@/lib/auth";
+import { agentFromSessionToken, agentsExist, safeNextPath, SESSION_COOKIE } from "@/lib/auth";
 import { storeSettings } from "@/lib/settings";
 import { BrandMark } from "../components/ui";
 
@@ -11,6 +11,7 @@ export function generateMetadata(): Metadata {
 
 const ERRORS: Record<string, string> = {
   invalid: "That password isn't right.",
+  invalidAgent: "That email and password don't match an account.",
   locked: "Too many attempts. Try again in 15 minutes.",
   setup: "Sign-in isn't set up on the server yet.",
 };
@@ -23,8 +24,14 @@ export default async function LoginPage({
 }) {
   const { error, next } = await searchParams;
   const target = safeNextPath(next);
-  if (readSession((await cookies()).get(SESSION_COOKIE)?.value)) redirect(target);
-  const message = typeof error === "string" ? ERRORS[error] : undefined;
+  // A cookie only counts if its agent is still active; otherwise / would send them straight back here
+  if (agentFromSessionToken((await cookies()).get(SESSION_COOKIE)?.value)) redirect(target);
+  // Agent accounts sign in by email; before the first exists, the shared password alone
+  const byEmail = agentsExist();
+  const message =
+    typeof error === "string" ? ERRORS[byEmail && error === "invalid" ? "invalidAgent" : error] : undefined;
+  const inputClass =
+    "w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-shadow focus:border-ring focus:ring-3 focus:ring-ring/20";
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4">
@@ -41,6 +48,23 @@ export default async function LoginPage({
           </div>
         </div>
         <input type="hidden" name="next" value={target} />
+        {byEmail && (
+          <>
+            <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-card-foreground">
+              Email
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              required
+              autoFocus
+              autoComplete="username"
+              aria-invalid={message ? true : undefined}
+              className={`${inputClass} mb-4`}
+            />
+          </>
+        )}
         <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-card-foreground">
           Password
         </label>
@@ -49,11 +73,11 @@ export default async function LoginPage({
           name="password"
           type="password"
           required
-          autoFocus
+          autoFocus={!byEmail}
           autoComplete="current-password"
           aria-invalid={message ? true : undefined}
           aria-describedby={message ? "login-error" : undefined}
-          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-shadow focus:border-ring focus:ring-3 focus:ring-ring/20"
+          className={inputClass}
         />
         {message && (
           <p id="login-error" role="alert" className="mt-2 text-sm text-destructive">
