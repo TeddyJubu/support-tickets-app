@@ -1,27 +1,34 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - name: Install Chromium for browser tests
         run: npx playwright install --with-deps chromium
-      # secret scan, lint, typecheck, unit/route/safety tests, offline scenario QA, build, browser tests
+      # secret scan, lint, typecheck, unit/route/safety tests, offline scenario QA, build, browser tests.
+      # Needs no .env.local or data/*.db: tests use scratch data and routes read both at request time
       - name: Release gate
         run: npm run verify
       - name: Browser test traces

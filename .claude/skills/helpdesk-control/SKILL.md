@@ -13,7 +13,7 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 
 | Goal | Command |
 |---|---|
-| Health check (service, site, store, ticket counts) | `npm run helpdesk -- status` |
+| Health check (service, site, store, ticket counts, last backup) | `npm run helpdesk -- status` |
 | List simulated tickets (default) | `npm run helpdesk -- tickets [--q TEXT] [--limit N]` |
 | List historical (Gorgias export) tickets | `npm run helpdesk -- tickets --history [--q TEXT]` |
 | Read a ticket with customer, conversation, history | `npm run helpdesk -- show SIM-1009` |
@@ -28,7 +28,8 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 | AI worker, draft queue, scheduled tasks | `npm run helpdesk -- worker` |
 | Ops report (services, queue, disk, backups, KB) | `npm run helpdesk -- ops` |
 | Staff accounts | `npm run helpdesk -- user list` · `user add <name> --name "Full Name" [--owner]` · `user password <name>` · `user disable <name>` |
-| Backups | `npm run helpdesk -- backups` · `backup` · `restore-check <file> --key <private key>` |
+| Encrypted backups (worker, every 6 h) | `npm run helpdesk -- backups` · `backup` · `restore-check <file> --key <private key>` |
+| Database copies to the bucket (nightly timer) / check one | `npm run backup` · `npm run backup -- verify data/backups/sim-<time>.db.gz` |
 | Knowledge base | `npm run kb -- status` · `search <question>` · `index` · `products` |
 
 ## Customer simulator

@@ -1,8 +1,5 @@
 "use client";
-/* eslint-disable react-hooks/refs -- tool handlers and renders read detailRef when the AI calls a
-   tool, after render; the ref only keeps them from closing over a stale ticket */
 
-import { useLayoutEffect, useRef } from "react";
 import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
 import { tool, success } from "@yourgpt/copilot-sdk/core";
@@ -310,18 +307,16 @@ function TicketContext() {
 
 export function TicketingTools() {
   const dashboard = useDashboard();
-  // Handlers run asynchronously; read the latest ticket through a ref
-  const detailRef = useRef<TicketDetail | null>(null);
-  useLayoutEffect(() => {
-    detailRef.current = dashboard.ticketDetail;
-  });
 
+  // useTools registers these once, so handlers read the open ticket when they run
   const requireTicket = () => {
-    const detail = detailRef.current;
+    const detail = dashboard.getTicketDetail();
     if (!detail) throw new Error("No ticket is open");
     return detail;
   };
 
+  // Note: useTools types expect ToolDefinition but tool() returns Omit<ToolDefinition, "name">
+  // The name is derived from the object key at runtime. Using 'as any' to work around type mismatch.
   useTools({
     // ========================================
     // DATA LOOKUP TOOLS (seeded store data)
@@ -952,7 +947,7 @@ export function TicketingTools() {
           | undefined;
         if (!selectedOffer) return { success: false, error: "No offer selected" };
         dashboard.setSentOffer(selectedOffer);
-        const detail = detailRef.current;
+        const detail = dashboard.getTicketDetail();
         return success({
           options: compensationOptions(detail, String(params.issueSeverity ?? "medium")),
           reasoning: String(params.reasoning ?? ""),
@@ -1034,7 +1029,7 @@ export function TicketingTools() {
           | undefined;
         if (!selectedSlot) return { success: false, error: "No time slot selected" };
         dashboard.setCallbackScheduled({ date: selectedSlot.date, time: selectedSlot.time });
-        const profile = profileFor(detailRef.current);
+        const profile = profileFor(dashboard.getTicketDetail());
         return success({
           scheduled: true,
           selectedSlot,

@@ -19,7 +19,8 @@
     "heartbeat-check": "node --no-warnings --import ./scripts/register-ts.mjs scripts/heartbeat-check.ts",
     "qa": "node --no-warnings --import ./scripts/register-ts.mjs scripts/qa.ts",
     "test:e2e": "playwright test",
-    "verify": "npm run secret-scan && npm run lint && npm run typecheck && npm test && npm run qa && npm run build && npm run test:e2e"
+    "verify": "npm run secret-scan && npm run lint && npm run typecheck && npm test && npm run qa && npm run build && npm run test:e2e",
+    "backup": "node --no-warnings scripts/backup-db.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
