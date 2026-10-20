@@ -1,56 +1,30 @@
-// Tests the email reply route's idempotency against a scratch copy of data/sim.db.
-// SES is stubbed: @/lib/aws-email resolves to an in-memory fake, so no email is ever sent.
-//   node --no-warnings scripts/test-email-reply.mjs     (SIM_DB_SOURCE=path/to/sim.db to copy another db)
+// Email reply route: idempotency and never emailing a reply twice.
+// SES is stubbed (no email is ever sent) and the database is a scratch one.
 
+import { scratch, stubModule, importApp } from "./helpers.mjs";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { register } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { test, after } from "node:test";
-
-const root = fileURLToPath(new URL("..", import.meta.url));
-
-// Scratch copy: lib/sim-db.ts opens <cwd>/data/sim.db
-const scratch = mkdtempSync(join(tmpdir(), "email-reply-test-"));
-mkdirSync(join(scratch, "data"));
-const dbPath = join(scratch, "data/sim.db");
-const live = process.env.SIM_DB_SOURCE ?? join(root, "data/sim.db");
-if (existsSync(live)) new DatabaseSync(live, { readOnly: true }).exec(`VACUUM INTO '${dbPath.replaceAll("'", "''")}'`);
-process.chdir(scratch);
-for (const k of Object.keys(process.env)) if (/AWS|OUTBOUND_EMAIL/.test(k)) delete process.env[k];
-after(() => rmSync(scratch, { recursive: true, force: true }));
+import { test } from "node:test";
 
 // Fake SES, controlled per test through globalThis.__ses
-const stub = `
-  export class EmailNotSentError extends Error {}
-  export async function sendEmail(m) {
-    const ses = globalThis.__ses;
-    ses.calls.push(m);
-    return ses.impl(m, EmailNotSentError);
-  }`;
-const hooks = `
-  const root = ${JSON.stringify(pathToFileURL(root).href)};
-  const stub = ${JSON.stringify(`data:text/javascript,${encodeURIComponent(stub)}`)};
-  export async function resolve(spec, ctx, next) {
-    if (spec === "@/lib/aws-email") return { url: stub, shortCircuit: true };
-    if (spec.startsWith("@/")) spec = new URL(spec.slice(2), root).href;
-    if (/^(\\.|file:)/.test(spec) && !/\\.[cm]?[jt]sx?$/.test(spec)) {
-      try { return await next(spec + ".ts", ctx); } catch {}
-    }
-    return next(spec, ctx);
-  }`;
-register(`data:text/javascript,${encodeURIComponent(hooks)}`);
+stubModule(
+  "@/lib/aws-email",
+  `export class EmailNotSentError extends Error {}
+   export async function sendEmail(m) {
+     const ses = globalThis.__ses;
+     ses.calls.push(m);
+     return ses.impl(m, EmailNotSentError);
+   }`,
+);
 
 let sent = 0;
 const ses = { calls: [], impl: async () => `<fake-${++sent}-${Date.now()}@us-west-2.amazonses.com>` };
 globalThis.__ses = ses;
 const ok = ses.impl;
 
-const { POST } = await import(pathToFileURL(join(root, "app/api/helpdesk/email/tickets/[id]/reply/route.ts")).href);
-const simDb = await import(pathToFileURL(join(root, "lib/sim-db.ts")).href);
+const { POST } = await importApp("app/api/helpdesk/email/tickets/[id]/reply/route.ts");
+const simDb = await importApp("lib/sim-db.ts");
 
 // A simulated email ticket of our own (simulator domain), only in the scratch copy
 const { ticketId } = simDb.ingestEmail({
@@ -62,7 +36,7 @@ const { ticketId } = simDb.ingestEmail({
   refs: [],
 });
 
-const raw = new DatabaseSync(dbPath);
+const raw = new DatabaseSync(join(scratch, "sim.db"));
 const agentMessages = () =>
   raw.prepare(`SELECT count(*) AS c FROM sim_messages WHERE ticket_id = ? AND author = 'agent'`).get(ticketId).c;
 const outbox = (key) => raw.prepare(`SELECT * FROM sim_email_outbox WHERE idem_key = ?`).get(key);
@@ -82,8 +56,7 @@ const reset = () => {
   ses.impl = ok;
 };
 
-test("scratch copy is in use", () => {
-  assert.equal(process.cwd(), scratch);
+test("scratch database is in use", () => {
   assert.ok(simDb.getSimTicketDetail(ticketId));
 });
 

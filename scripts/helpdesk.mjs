@@ -90,6 +90,7 @@ const commands = {
       service = e.stdout?.trim() || "inactive";
     }
     const site = await fetch(`${SITE}/`).then((r) => r.status).catch(() => 0);
+    const ready = await fetch(`${BASE}/api/ready`).then((r) => r.json()).catch(() => null);
     const [sim, hist, store] = await Promise.all([
       api("/api/helpdesk/tickets?source=sim&limit=100"),
       api("/api/helpdesk/tickets?limit=1"),
@@ -98,6 +99,8 @@ const commands = {
     const byStatus = sim.tickets.reduce((m, t) => ((m[t.status] = (m[t.status] ?? 0) + 1), m), {});
     const data = {
       service,
+      ready: ready ? ready.ready : null,
+      checks: ready?.checks ?? null,
       site: { url: SITE, httpStatus: site },
       store: store === 503 ? "not configured" : "connected",
       simulatedTickets: { total: sim.total, ...byStatus },
@@ -107,6 +110,7 @@ const commands = {
     out(data, () =>
       [
         `service      ${data.service}`,
+        `ready        ${ready ? (ready.ready ? "yes" : "NO") : "unknown"}${ready ? `  (${Object.entries(ready.checks).map(([k, c]) => `${k} ${c.ok ? "ok" : `FAIL${c.detail ? `: ${c.detail}` : ""}`}`).join(", ")})` : ""}`,
         `site         ${SITE} (HTTP ${site})`,
         `store        ${data.store}`,
         `simulated    ${sim.total} tickets (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ") || "none"})`,

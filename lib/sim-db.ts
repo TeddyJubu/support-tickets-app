@@ -4,8 +4,8 @@
 // Simulator customers are pseudonyms. Real inbound email (app/api/helpdesk/inbound/ses)
 // also lands here, with the sender's real name and address.
 
-import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
+import { openDatabase, transaction } from "./db";
+import { SIM_MIGRATIONS } from "./sim-migrations";
 import type {
   Customer,
   CustomerStats,
@@ -17,70 +17,7 @@ import type {
 
 type Row = Record<string, unknown>;
 
-let db: DatabaseSync | null = null;
-
-function getDb() {
-  if (db) return db;
-  db = new DatabaseSync(join(process.cwd(), "data/sim.db"));
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA busy_timeout = 5000;
-
-    CREATE TABLE IF NOT EXISTS sim_customers (
-      id TEXT PRIMARY KEY,
-      source_key TEXT UNIQUE,          -- sha256 of the real email; never the email itself
-      first_name TEXT, last_name TEXT, email TEXT UNIQUE, phone TEXT,
-      city TEXT, province TEXT, country TEXT,
-      total_spent REAL DEFAULT 0, total_orders INTEGER DEFAULT 0,
-      store_customer_id TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS sim_tickets (
-      seq INTEGER PRIMARY KEY AUTOINCREMENT,
-      id TEXT UNIQUE,                  -- "SIM-<seq>"
-      source_ticket_id TEXT,           -- historical ticket this was replayed from
-      run_id TEXT,
-      customer_id TEXT REFERENCES sim_customers(id),
-      subject TEXT, priority TEXT DEFAULT 'normal', tags TEXT, ai_intent TEXT,
-      order_name TEXT, order_id TEXT,
-      status TEXT DEFAULT 'open',      -- open | pending | closed
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      first_response_at TEXT,
-      closed_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS sim_tickets_customer ON sim_tickets(customer_id);
-
-    CREATE TABLE IF NOT EXISTS sim_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ticket_id TEXT REFERENCES sim_tickets(id),
-      author TEXT,                     -- customer | agent | system
-      sender TEXT,
-      body TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS sim_messages_ticket ON sim_messages(ticket_id);
-
-    CREATE TABLE IF NOT EXISTS sim_email_ids (
-      message_id TEXT PRIMARY KEY,     -- Message-ID of an inbound email
-      ticket_id TEXT REFERENCES sim_tickets(id)
-    );
-
-    -- Agent email replies, keyed by the client's idempotency key, so a retry never emails twice
-    CREATE TABLE IF NOT EXISTS sim_email_outbox (
-      idem_key TEXT PRIMARY KEY,
-      ticket_id TEXT REFERENCES sim_tickets(id),
-      body TEXT,
-      status TEXT DEFAULT 'sending',   -- sending | sent | failed (SES rejected it; safe to resend)
-      message_id TEXT,                 -- SES Message-ID once SES accepted it
-      error TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
-  return db;
-}
+export const getDb = () => openDatabase("sim.db", SIM_MIGRATIONS);
 
 const s = (v: unknown) => (v == null ? null : String(v));
 // SQLite datetime('now') is UTC without a zone marker; return ISO 8601
@@ -317,9 +254,7 @@ export interface SimTicketInput {
 
 export function createSimTicket(input: SimTicketInput) {
   const d = getDb();
-  // A savepoint, so this also works inside ingestEmail's transaction
-  d.exec("SAVEPOINT create_ticket");
-  try {
+  return transaction(d, () => {
     const customerId = upsertSimCustomer(input.customer);
     const res = d
       .prepare(
@@ -337,13 +272,8 @@ export function createSimTicket(input: SimTicketInput) {
       `${input.customer.firstName} ${input.customer.lastName}`,
       input.body,
     );
-    d.exec("RELEASE create_ticket");
     return id;
-  } catch (err) {
-    d.exec("ROLLBACK TO create_ticket");
-    d.exec("RELEASE create_ticket");
-    throw err;
-  }
+  });
 }
 
 export function addSimMessage(
@@ -409,37 +339,32 @@ export function ingestEmail(input: SimTicketInput & { messageId: string; refs: s
     (d.prepare(`SELECT ticket_id FROM sim_email_ids WHERE message_id = ?`).get(id) as Row | undefined)?.ticket_id as
       | string
       | undefined;
-  const dup = known(input.messageId);
-  if (dup) return { ticketId: dup, created: false, duplicate: true };
+  // One transaction from the duplicate check to the write: the message and its Message-ID
+  // commit together, so an SNS retry (even a concurrent one) can't append twice
+  return transaction(d, () => {
+    const dup = known(input.messageId);
+    if (dup) return { ticketId: dup, created: false, duplicate: true };
 
-  let ticketId = input.refs.map(known).find(Boolean);
-  if (!ticketId) {
-    const open = d
-      .prepare(
-        `SELECT t.id, t.subject FROM sim_tickets t JOIN sim_customers c ON c.id = t.customer_id
-         WHERE c.source_key = ? AND t.status != 'closed' ORDER BY t.seq DESC`,
-      )
-      .all(input.customer.sourceKey) as Row[];
-    ticketId = open.find((t) => baseSubject(String(t.subject)) === baseSubject(input.subject))?.id as string | undefined;
-  }
+    let ticketId = input.refs.map(known).find(Boolean);
+    if (!ticketId) {
+      const open = d
+        .prepare(
+          `SELECT t.id, t.subject FROM sim_tickets t JOIN sim_customers c ON c.id = t.customer_id
+           WHERE c.source_key = ? AND t.status != 'closed' ORDER BY t.seq DESC`,
+        )
+        .all(input.customer.sourceKey) as Row[];
+      ticketId = open.find((t) => baseSubject(String(t.subject)) === baseSubject(input.subject))?.id as string | undefined;
+    }
 
-  const created = !ticketId;
-  // Message and Message-ID commit together, so an SNS retry after a crash can't append twice
-  d.exec("SAVEPOINT ingest_email");
-  try {
+    const created = !ticketId;
     if (ticketId) {
       addSimMessage(ticketId, "customer", input.body, `${input.customer.firstName} ${input.customer.lastName}`.trim());
     } else {
       ticketId = createSimTicket(input);
     }
     d.prepare(`INSERT OR IGNORE INTO sim_email_ids (message_id, ticket_id) VALUES (?, ?)`).run(input.messageId, ticketId);
-    d.exec("RELEASE ingest_email");
-  } catch (err) {
-    d.exec("ROLLBACK TO ingest_email");
-    d.exec("RELEASE ingest_email");
-    throw err;
-  }
-  return { ticketId, created, duplicate: false };
+    return { ticketId, created, duplicate: false };
+  });
 }
 
 export function recordEmailId(messageId: string, ticketId: string) {
@@ -490,23 +415,21 @@ export function failEmailReply(key: string, error: string) {
 // After SES accepted the reply: mark it sent and add the agent message together
 export function completeEmailReply(key: string, ticketId: string, messageId: string, body: string, sender: string) {
   const d = getDb();
-  d.exec("SAVEPOINT complete_email_reply");
   try {
-    const res = d
-      .prepare(
-        `UPDATE sim_email_outbox SET status = 'sent', message_id = ?, error = NULL, updated_at = datetime('now')
-         WHERE idem_key = ? AND status != 'sent'`,
-      )
-      .run(messageId, key);
-    if (res.changes === 0) throw new Error("Outbox row missing or already sent");
-    recordEmailId(messageId, ticketId);
-    const detail = addSimMessage(ticketId, "agent", body, sender);
-    if (!detail) throw new Error(`Ticket ${ticketId} not found`);
-    d.exec("RELEASE complete_email_reply");
-    return detail;
+    return transaction(d, () => {
+      const res = d
+        .prepare(
+          `UPDATE sim_email_outbox SET status = 'sent', message_id = ?, error = NULL, updated_at = datetime('now')
+           WHERE idem_key = ? AND status != 'sent'`,
+        )
+        .run(messageId, key);
+      if (res.changes === 0) throw new Error("Outbox row missing or already sent");
+      recordEmailId(messageId, ticketId);
+      const detail = addSimMessage(ticketId, "agent", body, sender);
+      if (!detail) throw new Error(`Ticket ${ticketId} not found`);
+      return detail;
+    });
   } catch (err) {
-    d.exec("ROLLBACK TO complete_email_reply");
-    d.exec("RELEASE complete_email_reply");
     // Keep at least the Message-ID, so a retry saves the reply instead of emailing it again
     try {
       d.prepare(`UPDATE sim_email_outbox SET message_id = ?, updated_at = datetime('now') WHERE idem_key = ?`).run(

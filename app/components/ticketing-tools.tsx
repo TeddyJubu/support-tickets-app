@@ -1,6 +1,8 @@
 "use client";
+/* eslint-disable react-hooks/refs -- tool handlers and renders read detailRef when the AI calls a
+   tool, after render; the ref only keeps them from closing over a stale ticket */
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
 import { tool, success } from "@yourgpt/copilot-sdk/core";
@@ -304,7 +306,9 @@ export function TicketingTools() {
   const dashboard = useDashboard();
   // Handlers run asynchronously; read the latest ticket through a ref
   const detailRef = useRef<TicketDetail | null>(null);
-  detailRef.current = dashboard.ticketDetail;
+  useLayoutEffect(() => {
+    detailRef.current = dashboard.ticketDetail;
+  });
 
   const requireTicket = () => {
     const detail = detailRef.current;
@@ -312,9 +316,6 @@ export function TicketingTools() {
     return detail;
   };
 
-  // Note: useTools types expect ToolDefinition but tool() returns Omit<ToolDefinition, "name">
-  // The name is derived from the object key at runtime. Using 'as any' to work around type mismatch.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   useTools({
     // ========================================
     // DATA LOOKUP TOOLS (seeded store data)
