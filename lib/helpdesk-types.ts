@@ -1,4 +1,6 @@
 // Shapes returned by the helpdesk API routes (app/api/helpdesk/*).
+import type { AiDraftState } from "./drafting/state";
+export type { AiDraftState, DraftInfo, DraftJobInfo } from "./drafting/state";
 // Shared by the server data layer and the client.
 
 export interface TicketSummary {
@@ -118,6 +120,8 @@ export interface TicketDetail {
   stats: CustomerStats;
   /** Full conversation (simulated tickets only; the Gorgias export has no bodies) */
   messages?: SimMessage[];
+  /** Inbox tickets: the latest AI draft and drafting job */
+  ai?: AiDraftState;
 }
 
 export interface Product {

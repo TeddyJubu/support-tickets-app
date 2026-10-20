@@ -14,7 +14,8 @@
     "test": "node --no-warnings --import ./scripts/register-ts.mjs --test \"tests/**/*.test.mjs\"",
     "migrate": "node --no-warnings --import ./scripts/register-ts.mjs scripts/migrate.ts",
     "secret-scan": "node scripts/secret-scan.mjs",
-    "kb": "node --no-warnings --import ./scripts/register-ts.mjs scripts/kb.ts"
+    "kb": "node --no-warnings --import ./scripts/register-ts.mjs scripts/kb.ts",
+    "worker": "node --no-warnings --import ./scripts/register-ts.mjs scripts/worker.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

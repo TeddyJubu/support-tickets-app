@@ -6,6 +6,8 @@
 
 import { openDatabase, transaction } from "./db";
 import { SIM_MIGRATIONS } from "./sim-migrations";
+import { queueDraft } from "./drafting/queue";
+import { aiDraftState } from "./drafting/state";
 import {
   INBOX_VIEWS,
   PRIORITIES,
@@ -246,6 +248,7 @@ export function getSimTicketDetail(id: string, viewer = 0): TicketDetail | null 
     topIntents: [],
   };
   return {
+    ai: aiDraftState(getDb(), id),
     ticket: toTicket(r),
     customer: customerRow ? toCustomer(customerRow) : null,
     history: history.map(toSummary),
@@ -403,12 +406,16 @@ export function appendMessage(
         `UPDATE sim_tickets SET status = 'pending', updated_at = datetime('now'),
            first_response_at = coalesce(first_response_at, datetime('now')) WHERE id = ?`,
       ).run(ticketId);
+      // The customer has been answered: an unused AI draft is out of date
+      d.prepare(`UPDATE drafts SET state = 'superseded', updated_at = datetime('now') WHERE ticket_id = ? AND state = 'ready'`).run(ticketId);
     } else if (author === "customer") {
       // A customer reply reopens the ticket and wakes it from snooze
       d.prepare(
         `UPDATE sim_tickets SET status = 'open', closed_at = NULL, snoozed_until = NULL, updated_at = datetime('now')
          WHERE id = ?`,
       ).run(ticketId);
+      // Same transaction: triage the message and queue an AI draft for it
+      queueDraft(d, ticketId, messageId);
     } else if (author === "note") {
       d.prepare(`UPDATE sim_tickets SET updated_at = datetime('now') WHERE id = ?`).run(ticketId);
     }

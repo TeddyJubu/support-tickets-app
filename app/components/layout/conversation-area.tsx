@@ -7,6 +7,7 @@ import { useDashboard } from "../context/dashboard-context";
 import { Skeleton } from "../ui";
 import { Message } from "./message";
 import { MessageComposer } from "./message-composer";
+import { DraftStrip } from "./draft-strip";
 
 function ConversationSkeleton() {
   return (
@@ -145,6 +146,11 @@ export function ConversationArea() {
         </div>
       </div>
 
+      {loaded && ticketDetail.ticket.simulated && (
+        <div className="mx-auto w-full max-w-3xl px-6">
+          <DraftStrip key={ticketDetail.ticket.id} ai={ticketDetail.ai} />
+        </div>
+      )}
       {loaded && <MessageComposer key={ticketDetail.ticket.id} />}
     </div>
   );

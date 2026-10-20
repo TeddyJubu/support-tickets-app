@@ -15,6 +15,7 @@
 //   products <query> | customers <query>   search the store export
 //   restart                         rebuild + restart the production service
 //   logs [N]                        last N lines of the service log (default 50)
+//   worker                          worker heartbeat, draft queue and scheduled tasks
 //   user list                       staff accounts
 //   user add <username> [--name "Full Name"] [--email E] [--owner]   asks for the password
 //   user password <username>        set a new password (signs the user out everywhere)
@@ -218,8 +219,33 @@ const commands = {
     console.log("building…");
     execFileSync("npm", ["run", "build"], { cwd: root, stdio: "inherit" });
     sh("sudo", ["systemctl", "restart", "support-tickets"]);
+    // The worker runs the same code: restart it too when it's installed
+    let worker = false;
+    try {
+      worker = sh("systemctl", ["is-enabled", "support-tickets-worker"]) === "enabled";
+    } catch {}
+    if (worker) sh("sudo", ["systemctl", "restart", "support-tickets-worker"]);
     await new Promise((r) => setTimeout(r, 3000));
     console.log(`service ${sh("systemctl", ["is-active", "support-tickets"])}`);
+    if (worker) console.log(`worker  ${sh("systemctl", ["is-active", "support-tickets-worker"])}`);
+  },
+
+  // Reads the database directly (server only)
+  async worker() {
+    const { workerHealth } = await import("../lib/worker/state.ts");
+    const { queueStats } = await import("../lib/drafting/queue.ts");
+    const { listTasks } = await import("../lib/worker/schedule.ts");
+    const { getDb } = await import("../lib/sim-db.ts");
+    const health = workerHealth();
+    const queue = queueStats(getDb());
+    const tasks = listTasks().map((t) => ({ name: t.name, schedule: t.everyMinutes ? `every ${t.everyMinutes} min` : `daily ${t.dailyAtUtc} UTC`, last: t.last }));
+    out({ health, queue, tasks }, () =>
+      [
+        `worker   ${health.alive ? "alive" : "NOT RUNNING"}${health.ageSeconds != null ? ` (heartbeat ${health.ageSeconds}s ago)` : ""}${health.heartbeat?.current ? `, drafting ${health.heartbeat.current.ticketId}` : ""}`,
+        `queue    ${Object.entries(queue).filter(([k]) => k !== "oldestWaiting").map(([k, v]) => `${v} ${k}`).join(", ") || "empty"}${queue.oldestWaiting ? `; oldest waiting since ${queue.oldestWaiting}` : ""}`,
+        ...tasks.map((t) => `task     ${t.name.padEnd(16)} ${t.schedule.padEnd(18)} ${t.last ? `${t.last.value.ok ? "ok" : `FAILED: ${t.last.value.error}`} at ${t.last.updatedAt}` : "not run yet"}`),
+      ].join("\n"),
+    );
   },
 
   // Staff accounts live in data/sim.db; these act on the database directly (server only)

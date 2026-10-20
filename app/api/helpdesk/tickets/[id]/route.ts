@@ -10,7 +10,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const detail = isSimTicketId(id) ? getSimTicketDetail(id, staffFromRequest(request)?.id ?? 0) : getTicketDetail(id);
+  if (isSimTicketId(id)) {
+    const detail = getSimTicketDetail(id, staffFromRequest(request)?.id ?? 0);
+    if (!detail) return Response.json({ error: "Ticket not found" }, { status: 404 });
+    return Response.json(detail);
+  }
+  const detail = getTicketDetail(id);
   if (!detail) return Response.json({ error: "Ticket not found" }, { status: 404 });
   return Response.json(detail);
 }

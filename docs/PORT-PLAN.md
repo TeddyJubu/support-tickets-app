@@ -72,16 +72,16 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 4 — Automatic AI drafts (background pipeline)
 
-- [ ] **4.1 Job queue (M).** `jobs` table: atomic pending→processing claim, completion only with a committed result, stale-claim recovery after 10 min, max 3 attempts, then `failed` with a visible reason. Enqueue in the same transaction as the customer message (simulator, SES inbound, staff-created tickets).
-- [ ] **4.2 Worker process (M).** `scripts/worker.mjs`: single instance (lock file), graceful SIGTERM, heartbeat row for `/api/ready`, serial drafting with timeouts. Runs under a new systemd unit (needs approval, decision 2).
-- [ ] **4.3 Triage classifier (M).** Port the rule tables from `processor/classifier/tables/*.yaml` (regex rules, already JSON) into `lib/classifier/`. Escalate-only: can raise priority, force a sensitive draft or an owner alert, never lower. Runs before and after the model.
-- [ ] **4.4 Priority-aware queue (S).** Within a window of 25 jobs, sensitive high/critical customer messages jump ahead.
-- [ ] **4.5 Nothing-to-answer gate (S).** Pure thanks/acknowledgements skip drafting and alerts.
-- [ ] **4.6 Drafter (L).** Server-side Workers AI call with read-only tools: `search_kb`, `get_order` (demo store, simulated orders only), `get_returns` (simulated), `get_ticket_history`. System prompt rewritten from the Hermes SOUL/skills (KB before answering, notices win, no promises of actions, sensitive-topic rules). Output must be a JSON result (draft, action, severity, missing_facts, staff_next_step) wrapped in markers with a per-run random token; customer-supplied markers neutralised; mismatch fails closed.
-- [ ] **4.7 Draft cleaner (S).** Strip self-talk and internal notes, collapse repeats, sentence cap, flag unsupported action claims. Can only shorten or suppress.
-- [ ] **4.8 Retries and supersession (M).** Transient failures retry at 30 s then 120 s (max 3); auth/invalid-output/safety failures go to staff. A newer customer message supersedes the older draft. A crash after a draft is saved keeps it.
-- [ ] **4.9 Draft UI (M).** Suggestion strip in the conversation: Use draft, Dismiss, Restore, Expand, Copy; states queued / retrying / failed ("AI draft unavailable") with Retry; "Needs staff input" disables Use draft and shows the missing facts.
-- [ ] **4.10 Rewrite with AI (S).** "Edit reply with AI": draft + instruction → new text only, single-slot concurrency, 150 s timeout, stale responses dropped.
+- [x] **4.1 Job queue (M).** `jobs` table: atomic pending→processing claim, completion only with a committed result, stale-claim recovery after 10 min, max 3 attempts, then `failed` with a visible reason. Enqueue in the same transaction as the customer message (simulator, SES inbound, staff-created tickets).
+- [x] **4.2 Worker process (M).** `scripts/worker.mjs`: single instance (lock file), graceful SIGTERM, heartbeat row for `/api/ready`, serial drafting with timeouts. Unit file in `deploy/systemd/support-tickets-worker.service`; installing it needs approval (decision 2).
+- [x] **4.3 Triage classifier (M).** Port the rule tables from `processor/classifier/tables/*.yaml` (regex rules, already JSON) into `lib/classifier/`. Escalate-only: can raise priority, force a sensitive draft or an owner alert, never lower. Runs before and after the model.
+- [x] **4.4 Priority-aware queue (S).** Within a window of 25 jobs, sensitive high/critical customer messages jump ahead.
+- [x] **4.5 Nothing-to-answer gate (S).** Pure thanks/acknowledgements skip drafting and alerts.
+- [x] **4.6 Drafter (L).** Server-side Workers AI call with read-only tools: `search_kb`, `get_order` (demo store, simulated orders only), `get_returns` (simulated), `get_ticket_history`. System prompt rewritten from the Hermes SOUL/skills (KB before answering, notices win, no promises of actions, sensitive-topic rules). Output must be a JSON result (draft, action, severity, missing_facts, staff_next_step) wrapped in markers with a per-run random token; customer-supplied markers neutralised; mismatch fails closed.
+- [x] **4.7 Draft cleaner (S).** Strip self-talk and internal notes, collapse repeats, sentence cap, flag unsupported action claims. Can only shorten or suppress.
+- [x] **4.8 Retries and supersession (M).** Transient failures retry at 30 s then 120 s (max 3); auth/invalid-output/safety failures go to staff. A newer customer message supersedes the older draft. A crash after a draft is saved keeps it.
+- [x] **4.9 Draft UI (M).** Suggestion strip in the conversation: Use draft, Dismiss, Restore, Expand, Copy; states queued / retrying / failed ("AI draft unavailable") with Retry; "Needs staff input" disables Use draft and shows the missing facts.
+- [x] **4.10 Rewrite with AI (S).** "Edit reply with AI": draft + instruction → new text only, single-slot concurrency, 150 s timeout, stale responses dropped.
 
 ### Phase 5 — Safe sending
 

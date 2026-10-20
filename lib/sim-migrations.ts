@@ -183,4 +183,61 @@ export const SIM_MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    version: 5,
+    name: "AI drafting: job queue, drafts, worker state",
+    up: (db) =>
+      db.exec(`
+        -- One job per customer message that needs a draft. A newer customer message
+        -- supersedes waiting jobs for the same ticket.
+        CREATE TABLE jobs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL DEFAULT 'draft',
+          ticket_id TEXT NOT NULL REFERENCES sim_tickets(id),
+          message_id INTEGER,                      -- the customer message to answer
+          state TEXT NOT NULL DEFAULT 'pending',   -- pending | processing | retry_wait | done | failed | superseded | skipped
+          urgent INTEGER NOT NULL DEFAULT 0,       -- sensitive high/critical: may jump the queue
+          attempts INTEGER NOT NULL DEFAULT 0,
+          run_after TEXT NOT NULL DEFAULT (datetime('now')),
+          claimed_at TEXT,
+          claimed_by TEXT,
+          error TEXT,
+          error_kind TEXT,                         -- transient | auth | invalid | safety | stale
+          detail TEXT,                             -- JSON (classifier result, skip reason)
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          finished_at TEXT
+        );
+        CREATE INDEX jobs_state ON jobs(state, run_after, id);
+        CREATE INDEX jobs_ticket ON jobs(ticket_id, id);
+
+        CREATE TABLE drafts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ticket_id TEXT NOT NULL REFERENCES sim_tickets(id),
+          job_id INTEGER UNIQUE REFERENCES jobs(id),
+          message_id INTEGER,
+          body TEXT NOT NULL,                      -- empty when staff must write the reply
+          action TEXT NOT NULL,                    -- reply | needs_staff
+          severity TEXT NOT NULL DEFAULT 'normal',
+          sensitive INTEGER NOT NULL DEFAULT 0,
+          missing_facts TEXT,                      -- JSON list
+          staff_next_step TEXT,
+          flags TEXT,                              -- JSON list of cleaner/classifier notes
+          kb_refs TEXT,                            -- JSON list of article titles used
+          state TEXT NOT NULL DEFAULT 'ready',     -- ready | used | dismissed | superseded
+          model TEXT,
+          acted_by TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX drafts_ticket ON drafts(ticket_id, id);
+
+        -- Heartbeat and last-run times of scheduled tasks
+        CREATE TABLE worker_state (
+          key TEXT PRIMARY KEY,
+          value TEXT,
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+      `),
+  },
 ];
