@@ -113,11 +113,11 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 9 — Operations and console
 
-- [ ] **9.1 Ops monitor (S).** Worker job every minute: service state, DB readiness, queue progress, disk headroom, backup age → `data/ops-status.json`.
-- [ ] **9.2 Overview page (M).** Escalations, priority breakdown, recent staff activity, learning panel, system-health card (ok / stale / missing). Failed loads show "unavailable".
-- [ ] **9.3 Encrypted backups (M).** Every 6 h: SQLite online backup of `sim.db` and `kb.db` + `kb/`, encrypted (openssl CMS, recipient cert), keep ≥3. Needs approval (systemd timer or worker job).
-- [ ] **9.4 Restore check (S).** `npm run helpdesk -- restore-check <file>`: decrypt into a scratch folder, open, validate, never touch live data.
-- [ ] **9.5 Runbook (S).** Extend `reference.md`: worker, backups, restore, alerts, login management.
+- [x] **9.1 Ops monitor (S).** Worker job every minute: service state, DB readiness, queue progress, disk headroom, backup age → `data/ops-status.json`.
+- [x] **9.2 Overview page (M).** Escalations, priority breakdown, recent staff activity, learning panel, system-health card (ok / stale / missing). Failed loads show "unavailable".
+- [x] **9.3 Encrypted backups (M).** Every 6 h: SQLite online backup of `sim.db` and `kb.db` + `kb/`, encrypted (openssl CMS, recipient cert), keep ≥3. Needs approval (systemd timer or worker job).
+- [x] **9.4 Restore check (S).** `npm run helpdesk -- restore-check <file>`: decrypt into a scratch folder, open, validate, never touch live data.
+- [x] **9.5 Runbook (S).** Extend `reference.md`: worker, backups, restore, alerts, login management.
 
 ### Phase 10 — Quality gates
 

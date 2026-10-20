@@ -16,6 +16,10 @@
 //   restart                         rebuild + restart the production service
 //   logs [N]                        last N lines of the service log (default 50)
 //   worker                          worker heartbeat, draft queue and scheduled tasks
+//   ops                             latest ops monitor report (services, queue, disk, backups, KB)
+//   backup-setup                    create the backup key pair (then move the private key off the server)
+//   backup | backups                make an encrypted backup now | list backups
+//   restore-check <file> --key <private key>   decrypt and verify a backup in a temp folder
 //   user list                       staff accounts
 //   user add <username> [--name "Full Name"] [--email E] [--owner]   asks for the password
 //   user password <username>        set a new password (signs the user out everywhere)
@@ -47,7 +51,7 @@ const flag = (name) => {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 ? argv[i + 1] : undefined;
 };
-const positional = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.match(/^--(q|limit|offset|name|email)$/));
+const positional = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.match(/^--(q|limit|offset|name|email|key)$/));
 const [command, ...rest] = positional;
 
 async function api(path, init = {}) {
@@ -228,6 +232,43 @@ const commands = {
     await new Promise((r) => setTimeout(r, 3000));
     console.log(`service ${sh("systemctl", ["is-active", "support-tickets"])}`);
     if (worker) console.log(`worker  ${sh("systemctl", ["is-active", "support-tickets-worker"])}`);
+  },
+
+  async ops() {
+    const { collectOpsStatus } = await import("../lib/ops/monitor.ts");
+    const status = collectOpsStatus();
+    out(status, () =>
+      [`overall  ${status.ok ? "ok" : "NEEDS ATTENTION"}`, ...Object.entries(status.checks).map(([k, c]) => `${c.ok ? "ok  " : "FAIL"}     ${k.padEnd(14)} ${c.detail}`)].join("\n"),
+    );
+  },
+
+  async "backup-setup"() {
+    const { setupBackupKeys } = await import("../lib/ops/backup.ts");
+    const { cert, key } = setupBackupKeys();
+    console.log(`certificate (stays on the server): ${cert}`);
+    console.log(`PRIVATE KEY: ${key}`);
+    console.log("Copy the private key somewhere safe off this server (password manager, laptop), then delete it here:");
+    console.log(`  shred -u ${key}`);
+    console.log("Without it, backups can't be decrypted. With it on the server, anyone with server access can read them.");
+  },
+
+  async backup() {
+    const { runBackup } = await import("../lib/ops/backup.ts");
+    const r = await runBackup();
+    out(r, () => `backup ${r.file} (${Math.round(r.bytes / 1024)} KB, ${r.tickets} tickets, schema ${r.schema})`);
+  },
+
+  async backups() {
+    const { listBackups } = await import("../lib/ops/backup.ts");
+    const list = listBackups();
+    out(list, () => list.map((b) => `${b.createdAt}  ${String(Math.round(b.bytes / 1024)).padStart(6)} KB  ${b.file}`).join("\n") || "no backups yet");
+  },
+
+  async "restore-check"(file = need(rest[0], "restore-check <file> --key <private key>")) {
+    const { restoreCheck } = await import("../lib/ops/backup.ts");
+    const r = restoreCheck(file, need(flag("key"), "restore-check <file> --key <private key>"));
+    out(r, () => JSON.stringify(r, null, 2));
+    if (!r.ok) process.exitCode = 1;
   },
 
   // Reads the database directly (server only)

@@ -7,6 +7,8 @@ import { syncProducts } from "../kb/products";
 import { rebuildIndex } from "../kb/index";
 import { getState, setState } from "./state";
 import { promoteApprovedLessons } from "../learning";
+import { runBackup } from "../ops/backup";
+import { writeOpsStatus } from "../ops/monitor";
 
 export interface Task {
   name: string;
@@ -17,6 +19,8 @@ export interface Task {
 }
 
 const tasks: Task[] = [
+  { name: "ops-monitor", everyMinutes: 1, run: () => ({ ok: writeOpsStatus().ok }) },
+  { name: "backup", everyMinutes: 360, run: () => runBackup() },
   { name: "prune-sessions", everyMinutes: 60, run: () => pruneSessions() },
   { name: "prune-notices", dailyAtUtc: "04:00", run: () => ({ removed: pruneNotices() }) },
   {
