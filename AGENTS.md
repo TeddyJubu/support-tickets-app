@@ -12,11 +12,12 @@ npm run helpdesk -- tickets             # simulated tickets
 npm run helpdesk -- show SIM-1009       # read one
 npm run simulate -- --count 3           # 3 simulated customers order and open tickets
 npm run helpdesk -- restart             # after code changes: build + restart the live site
+npm run helpdesk -- set-password        # web sign-in password (then restart)
 ```
 
 Hard rules:
 
 - Never print secrets from `.env.local`.
 - The demo store holds real customer data: only write simulated rows (`#S…` orders, `@customers.bb-sim.test` emails), never touch real ones or the `shop-sim` Worker.
-- The site is public: don't expose store or customer data through new endpoints.
+- The site is on the public internet behind a sign-in (`proxy.ts`, `lib/auth.ts`): keep every new page and API route behind it (check `isAgentRequest` in route handlers too), and don't expose store or customer data through new endpoints.
 - Ask before resetting data or changing Caddy, systemd or Cloudflare settings.

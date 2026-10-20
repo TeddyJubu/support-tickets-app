@@ -67,6 +67,7 @@ This is a standalone copy of `examples/support-tickets-demo` from the [Copilot S
 ```bash
 npm install
 cp .env.example .env.local   # then add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
+npm run helpdesk -- set-password   # the password you sign in with
 npm run dev
 ```
 
@@ -85,7 +86,7 @@ This writes `data/helpdesk.db` using Node's built-in `node:sqlite` (Node 22+). `
 
 The Gorgias export contains ticket metadata (subject, tags, intent, timing, message counts) but no message bodies, so the conversation view and the AI work from that metadata.
 
-Search engines are blocked via `robots.txt`, a `noindex` robots meta tag and an `X-Robots-Tag` header on every response. This does **not** restrict access: anyone with the URL can see the data.
+Every page and API route requires signing in (`proxy.ts`, `lib/auth.ts`): one shared password, set with `npm run helpdesk -- set-password`, and a 12-hour session cookie. The simulator and the control CLI use `Bearer SIM_API_KEY` instead; the SES webhook checks its own token. Search engines are also blocked via `robots.txt`, a `noindex` robots meta tag and an `X-Robots-Tag` header on every response.
 
 ## Customer Simulator
 
@@ -109,7 +110,7 @@ The private demo store is the `shop-sim` Worker and its D1 database. The Worker 
 
 - Simulated customers are added to the store as pseudonyms tagged `simulated`; simulated orders are named `#S1001`, `#S1002`, … with numbers far above the real ones.
 - The store's variant prices are all `0.00`, so the simulator prices items from the product export.
-- The public helpdesk only looks up orders that simulated tickets reference; the store itself holds real customer data.
+- The helpdesk only looks up orders that simulated tickets reference; the store itself holds real customer data.
 
 ## Deploy
 
@@ -124,6 +125,7 @@ The chat route (`app/api/chat/route.ts`) calls [Cloudflare Workers AI](https://d
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID (required)                                |
 | `CLOUDFLARE_API_TOKEN`  | API token with Workers AI permission (required)                      |
 | `CF_MODEL`              | Workers AI model with function calling, default `@cf/zai-org/glm-5.3-flash` |
+| `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET` | Web sign-in (required); set both with `npm run helpdesk -- set-password` |
 
 See the [Workers AI model catalog](https://developers.cloudflare.com/workers-ai/models/) for other models that support function calling.
 

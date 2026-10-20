@@ -15,18 +15,21 @@
 //   products <query> | customers <query>   search the store export
 //   restart                         rebuild + restart the production service
 //   logs [N]                        last N lines of the service log (default 50)
+//   set-password                    set the web sign-in password (signs everyone out)
 //
 // Talks to the running helpdesk (SIM_HELPDESK_URL, default http://127.0.0.1:3100)
 // using SIM_API_KEY from .env.local. Never prints secret values.
 
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { randomBytes, scryptSync } from "node:crypto";
 
 const root = resolve(import.meta.dirname, "..");
+const envFile = join(root, ".env.local");
 const env = {};
 try {
-  for (const line of readFileSync(join(root, ".env.local"), "utf8").split("\n")) {
+  for (const line of readFileSync(envFile, "utf8").split("\n")) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
     if (m) env[m[1]] = m[2];
   }
@@ -93,7 +96,9 @@ const commands = {
     const [sim, hist, store] = await Promise.all([
       api("/api/helpdesk/tickets?source=sim&limit=100"),
       api("/api/helpdesk/tickets?limit=1"),
-      fetch(`${BASE}/api/helpdesk/orders?name=%23S0`).then((r) => r.status),
+      fetch(`${BASE}/api/helpdesk/orders?name=%23S0`, {
+        headers: env.SIM_API_KEY ? { authorization: `Bearer ${env.SIM_API_KEY}` } : {},
+      }).then((r) => r.status),
     ]);
     const byStatus = sim.tickets.reduce((m, t) => ((m[t.status] = (m[t.status] ?? 0) + 1), m), {});
     const data = {
@@ -217,7 +222,67 @@ const commands = {
   async logs(n = rest[0] ?? "50") {
     console.log(sh("sudo", ["journalctl", "-u", "support-tickets", "-n", String(Number(n) || 50), "--no-pager", "-o", "cat"]));
   },
+
+  // Web sign-in: saves only a scrypt hash of the password, plus a new SESSION_SECRET
+  // (which signs everyone out). Prompts without echo, or reads one line from stdin.
+  async "set-password"() {
+    const password = await readSecret("New sign-in password: ");
+    if (password.length < 12) {
+      console.error("Use at least 12 characters.");
+      process.exit(2);
+    }
+    if (process.stdin.isTTY && (await readSecret("Repeat it: ")) !== password) {
+      console.error("The passwords don't match.");
+      process.exit(2);
+    }
+    const salt = randomBytes(16);
+    let text = "";
+    try {
+      text = readFileSync(envFile, "utf8");
+    } catch {}
+    text = setEnvLine(text, "HELPDESK_PASSWORD_HASH", `scrypt:${salt.toString("hex")}:${scryptSync(password, salt, 64).toString("hex")}`);
+    text = setEnvLine(text, "SESSION_SECRET", randomBytes(32).toString("base64url"));
+    writeFileSync(envFile, text);
+    chmodSync(envFile, 0o600); // it holds secrets: owner only
+    console.log("Saved to .env.local. Apply it with: npm run helpdesk -- restart");
+  },
 };
+
+function setEnvLine(text, key, value) {
+  const line = new RegExp(`^\\s*${key}\\s*=.*$`, "m");
+  if (line.test(text)) return text.replace(line, () => `${key}=${value}`);
+  return `${text}${text && !text.endsWith("\n") ? "\n" : ""}${key}=${value}\n`;
+}
+
+function readSecret(prompt) {
+  const stdin = process.stdin;
+  stdin.setEncoding("utf8");
+  if (!stdin.isTTY) {
+    let data = "";
+    stdin.on("data", (chunk) => (data += chunk));
+    return new Promise((done) => stdin.on("end", () => done(data.split(/\r?\n/)[0])));
+  }
+  process.stdout.write(prompt);
+  stdin.setRawMode(true);
+  stdin.resume();
+  let value = "";
+  return new Promise((done) => {
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === "\u0003") process.exit(130);
+        if (ch === "\r" || ch === "\n") {
+          stdin.setRawMode(false);
+          stdin.pause();
+          stdin.off("data", onData);
+          process.stdout.write("\n");
+          return done(value);
+        }
+        value = ch === "\u007f" || ch === "\b" ? value.slice(0, -1) : value + ch;
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
 
 async function setStatus(id, status) {
   const d = await api(`/api/helpdesk/sim/tickets/${encodeURIComponent(id)}`, {
@@ -228,7 +293,7 @@ async function setStatus(id, status) {
 }
 
 if (!command || !commands[command]) {
-  console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 21).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
   process.exit(command ? 2 : 0);
 }
 commands[command]().catch((err) => {

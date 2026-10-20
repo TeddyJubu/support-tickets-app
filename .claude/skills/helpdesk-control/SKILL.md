@@ -25,6 +25,7 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 | Search the catalog / customers (export) | `npm run helpdesk -- products tulle dress` · `customers cohen` |
 | Rebuild and restart the live site | `npm run helpdesk -- restart` |
 | Service logs | `npm run helpdesk -- logs 100` |
+| Set the web sign-in password (signs everyone out) | `npm run helpdesk -- set-password`, then `restart` |
 
 ## Customer simulator
 
@@ -44,9 +45,9 @@ A typical test cycle: `simulate --count N` → handle tickets (UI or `reply`) �
 
 ## Rules
 
-- **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOP_D1_TOKEN`, `SIM_API_KEY`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
+- **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOP_D1_TOKEN`, `SIM_API_KEY`, `HELPDESK_PASSWORD_HASH`, `SESSION_SECRET`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
 - **The demo store holds real customer data** (≈46k real customers, 324k real orders). Only ever write simulated rows (tagged `simulated`, `#S…` orders, `@customers.bb-sim.test` emails). Never modify, export or display real customers/orders, and don't change the `shop-sim` Worker itself.
-- **The helpdesk is public** (search engines blocked, no login). Don't add endpoints that expose store or customer data; the order lookup only serves orders referenced by simulated tickets.
+- **The helpdesk is on the public internet behind a sign-in.** Every page and API route needs a signed-in agent or `Bearer SIM_API_KEY` (the CLI sends it); keep new routes behind `proxy.ts` and check `isAgentRequest` in the handler. Don't add endpoints that expose store or customer data; the order lookup only serves orders referenced by simulated tickets. The user signs in with a password only they know: never set it for them.
 - Historical tickets are read-only; `reply`/`close` only work on `SIM-…` tickets.
 - After changing app code, run `npm run helpdesk -- restart` (it builds first). The user's own dev server may run on port 3000 — leave it alone.
 - Ask the user before resetting simulated data, deleting anything, or changing Caddy, systemd or Cloudflare settings.
