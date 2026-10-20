@@ -4,7 +4,7 @@
 //   npm run helpdesk -- <command> [args] [--json]
 //
 // Commands
-//   status                          service, site, store and ticket counts
+//   status                          service, site, store, ticket counts and last backup
 //   tickets [--sim|--history] [--q TEXT] [--limit N] [--offset N]
 //   show <ticketId>                 one ticket with customer, messages, history
 //   reply <ticketId> <text>         reply as the agent (simulated tickets only)
@@ -101,6 +101,11 @@ const commands = {
       }).then((r) => r.status),
     ]);
     const byStatus = sim.tickets.reduce((m, t) => ((m[t.status] = (m[t.status] ?? 0) + 1), m), {});
+    let backup = null;
+    try {
+      backup = JSON.parse(readFileSync(join(root, "data/backups/last-run.json"), "utf8"));
+    } catch {}
+    const backupAge = backup && Math.round((Date.now() - Date.parse(backup.at)) / 3600e3);
     const data = {
       service,
       site: { url: SITE, httpStatus: site },
@@ -108,6 +113,7 @@ const commands = {
       simulatedTickets: { total: sim.total, ...byStatus },
       historicalTickets: hist.total,
       model: env.CF_MODEL || "@cf/zai-org/glm-5.3-flash",
+      backup: backup && { at: backup.at, uploaded: backup.uploaded },
     };
     out(data, () =>
       [
@@ -117,6 +123,7 @@ const commands = {
         `simulated    ${sim.total} tickets (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ") || "none"})`,
         `history      ${hist.total} tickets`,
         `model        ${data.model}`,
+        `backup       ${backup ? `${backupAge < 48 ? `${backupAge}h` : `${Math.round(backupAge / 24)}d`} ago, ${backup.uploaded ? "uploaded" : "NOT uploaded"}` : "none yet (npm run backup)"}`,
       ].join("\n"),
     );
   },
