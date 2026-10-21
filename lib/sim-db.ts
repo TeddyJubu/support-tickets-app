@@ -20,6 +20,7 @@ import {
   type TicketDetail,
   type TicketSummary,
 } from "./helpdesk-types";
+import { storeSettings } from "./settings";
 
 type Row = Record<string, unknown>;
 
@@ -75,7 +76,7 @@ function toTicket(r: Row): Ticket {
     ...toSummary(r),
     channel: s(r.channel) ?? "simulator",
     integration:
-      r.channel === "email" ? "Email (support@teddyonfriday.com)" : r.channel === "staff" ? "Created by staff" : "Simulator",
+      r.channel === "email" ? `Email (${storeSettings().supportEmail})` : r.channel === "staff" ? "Created by staff" : "Simulator",
     createdByAgent: r.channel === "staff",
     assigneeName: s(r.assignee_name),
     assigneeEmail: null,
@@ -115,7 +116,7 @@ function toCustomer(r: Row): Customer {
     acceptsSms: false,
     totalSpent: n(r.total_spent),
     totalOrders: n(r.total_orders),
-    note: isEmailCustomer(r) ? "Emailed support@teddyonfriday.com" : "Simulated customer (pseudonym)",
+    note: isEmailCustomer(r) ? `Emailed ${storeSettings().supportEmail}` : "Simulated customer (pseudonym)",
     tags: isEmailCustomer(r) ? "email" : "simulated",
     taxExempt: false,
   };

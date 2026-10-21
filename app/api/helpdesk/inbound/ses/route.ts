@@ -9,7 +9,7 @@ const MAX_BODY = 20000;
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// AWS SES (support@teddyonfriday.com, us-west-2) -> SNS topic helpdesk-inbound-email
+// AWS SES (the store's SUPPORT_EMAIL, us-west-2) -> SNS topic helpdesk-inbound-email
 // (S3 bucket + notification) -> this route -> new ticket, or a reply on the existing thread.
 // ponytail: auth is a secret ?token= in the SNS subscription URL plus a TopicArn match;
 // add SNS signature verification if the URL could leak.

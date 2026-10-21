@@ -8,6 +8,7 @@ import { audit } from "./auth";
 import { sendEmail } from "./aws-email";
 import { getDb } from "./sim-db";
 import { createAlert } from "./notify";
+import { storeSettings } from "./settings";
 
 const RETRY_MINUTES = [1, 5, 30];
 const MAX_PER_HOUR = 30;
@@ -114,7 +115,7 @@ export function sendTestAlert(actor: string) {
   const ok = createAlert(getDb(), {
     kind: "test",
     subject: "[Helpdesk] Test alert",
-    body: `This is a test alert from the Buttons Bebe helpdesk, requested by ${actor}. Alerts for urgent tickets and a stopped worker come to this address.`,
+    body: `This is a test alert from the ${storeSettings().name} helpdesk, requested by ${actor}. Alerts for urgent tickets and a stopped worker come to this address.`,
     dedupeKey: `test:${Date.now()}`,
   });
   audit(actor, "alert_test");

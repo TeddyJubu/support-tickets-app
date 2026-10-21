@@ -12,6 +12,7 @@ import { extract, markers, neutralize, newRunToken, type Verdict } from "./marke
 import { finishJob, failJob, type ErrorKind, type Job } from "./queue";
 import { runTool, TOOLS, type ToolContext } from "./tools";
 import { onDraftSaved } from "./hooks";
+import { storeIntro, storeSettings } from "../settings";
 
 const MAX_TOOL_ROUNDS = 6;
 // The default model reasons before it answers; reasoning counts against this budget, and a
@@ -30,7 +31,7 @@ export class DraftError extends Error {
 
 export function systemPrompt(token: string) {
   const m = markers(token);
-  return `You draft email replies for Cute Things customer support (a small online baby and children's store). A person on the support team reviews every draft and decides whether to send it. You never send anything and you can't change orders, refunds, addresses or tickets.
+  return `You draft email replies for ${storeIntro()} customer support. A person on the support team reviews every draft and decides whether to send it. You never send anything and you can't change orders, refunds, addresses or tickets.
 
 Rules:
 - Before answering anything about policy, shipping, returns, refunds, exchanges, sizing, products or store hours, call search_kb and base the answer only on what it returns. Live notices override articles. Don't invent policy, prices, dates or stock.
@@ -42,7 +43,7 @@ Rules:
 - Refunds, disputes, damaged/wrong/missing items, lost packages, cancellations, address changes and angry customers are sensitive: still draft a helpful reply, set sensitive true, and don't promise outcomes.
 - If the customer only says thanks or acknowledges, set action "needs_staff" with staff_next_step "No reply needed" and leave the draft empty.
 - severity: "critical" for refund demands, disputes, chargebacks, damaged/wrong/missing items, lost packages, cancellations, legal threats or very angry customers; "high" for a hard deadline, an address change or a repeated follow-up; "normal" for everything else, including general questions about policy, shipping, hours or sizing.
-- Style: warm, plain, short (at most 5 sentences, plus a greeting and sign-off). Greet the customer by first name. Sign off as "Cute Things Support". Same language as the customer.
+- Style: warm, plain, short (at most 5 sentences, plus a greeting and sign-off). Greet the customer by first name. Sign off as "${storeSettings().senderName}". Same language as the customer.
 
 Answer in exactly this format, with no other text:
 ${m.draftOpen}

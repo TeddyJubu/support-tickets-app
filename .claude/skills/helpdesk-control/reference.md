@@ -66,6 +66,7 @@ Ticket status: a customer message sets `open` (and wakes a snooze), an agent rep
 |---|---|
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | Workers AI (copilot, drafter, embeddings) |
 | `CF_MODEL` (optional) | chat/draft model, default `@cf/zai-org/glm-5.3-flash` |
+| `STORE_NAME`, `STORE_DESCRIPTION`, `SUPPORT_EMAIL`, `SENDER_NAME` | this install's store (`lib/settings.ts`): the name in the UI, the copilot/draft/rewrite prompts and alert emails, the support address, and the sign-off and email display name. Defaults are the demo install's (Cute Things); set them for every new store. The copilot's instructions are built on the server (`app/api/chat/route.ts`); the browser only sends the open ticket's context |
 | `SIM_API_KEY` | simulator and CLI bearer key |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |
 | `SHOP_SIM_ACCOUNT_ID`, `SHOP_D1_DATABASE_ID`, `SHOP_D1_TOKEN` | demo store D1 access (token "helpdesk shop-sim deploy", has D1: Edit) |
@@ -73,7 +74,7 @@ Ticket status: a customer message sets `open` (and wakes a snooze), an agent rep
 | `HELPDESK_AWS_ACCESS_KEY_ID`, `HELPDESK_AWS_SECRET_ACCESS_KEY`, `HELPDESK_AWS_REGION`, `OUTBOUND_EMAIL_FROM` | SES sending, S3 reads |
 | `ALERT_EMAIL` (optional) | owner alert recipients, comma-separated; without it alerts stay in-app |
 | `AUTO_DRAFTS` (optional) | `0` stops queuing AI drafts (triage still runs) |
-| `HELPDESK_PUBLIC_URL` (optional) | links in alert emails, default `https://helpdesk.teddyonfriday.com` |
+| `HELPDESK_PUBLIC_URL` (optional) | links in alert emails and the site `helpdesk status` checks, default `https://helpdesk.teddyonfriday.com` |
 | `BACKUP_RECIPIENT_CERT` (optional) | backup certificate, default `data/backup-keys/recipient.pem` |
 | `HELPDESK_DATA_DIR`, `HELPDESK_KB_DIR` (optional) | data folders (tests use scratch folders) |
 | `BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | off-site copies of the encrypted backups: bucket URL (R2: `https://<account>.r2.cloudflarestorage.com/<bucket>`) and a token for that bucket only. Without them backups stay on this machine and `ops` shows `offsiteBackups` failing |

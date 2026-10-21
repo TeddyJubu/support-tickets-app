@@ -22,6 +22,7 @@ import { formatRelative } from "@/lib/helpdesk-format";
 import type { TicketSummary } from "@/lib/helpdesk-types";
 import { useDashboard } from "../context/dashboard-context";
 import { useSession } from "../context/session-context";
+import { useStore } from "../context/store-context";
 import { Avatar, BrandMark, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
 import { AppNav } from "../app-nav";
 import { NotificationBell } from "../notification-bell";
@@ -239,6 +240,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
     toggleBulk,
     setBulkAll,
   } = useDashboard();
+  const store = useStore();
   const inbox = ticketSource === "sim";
   // Inbox tickets live in the "sim" source; switch to it before opening one from the bell
   const selectTicketFromBell = (id: string) => {
@@ -264,7 +266,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
         <BrandMark />
         <div className="min-w-0 flex-1 leading-tight">
           <h1 className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-            Buttons Bebe
+            {store.name}
           </h1>
           <p className="text-xs text-muted-foreground">Support inbox</p>
         </div>
@@ -438,7 +440,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
                 </>
               ) : inbox ? (
                 <>
-                  Email <span className="font-medium text-foreground">support@teddyonfriday.com</span> to create one.
+                  Email <span className="font-medium text-foreground">{store.supportEmail}</span> to create one.
                 </>
               ) : (
                 "The archive is empty."

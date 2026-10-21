@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { storeSettings } from "@/lib/settings";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,17 +14,20 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Buttons Bebe · Support",
-  description: "Buttons Bebe support inbox with an AI copilot",
-  // Contains customer data: keep it out of search engines
-  robots: {
-    index: false,
-    follow: false,
-    nocache: true,
-    googleBot: { index: false, follow: false, noimageindex: true },
-  },
-};
+export function generateMetadata(): Metadata {
+  const { name } = storeSettings();
+  return {
+    title: `${name} · Support`,
+    description: `${name} support inbox with an AI copilot`,
+    // Contains customer data: keep it out of search engines
+    robots: {
+      index: false,
+      follow: false,
+      nocache: true,
+      googleBot: { index: false, follow: false, noimageindex: true },
+    },
+  };
+}
 
 export default function RootLayout({
   children,

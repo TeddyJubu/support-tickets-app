@@ -5,6 +5,7 @@
 import { AiError, chatCompletion } from "../workers-ai";
 import { cleanDraft } from "./cleaner";
 import { neutralize } from "./markers";
+import { storeIntro, storeSettings } from "../settings";
 
 const TIMEOUT_MS = 150_000;
 let busy = false;
@@ -19,8 +20,7 @@ export async function rewriteDraft(input: { text: string; instruction: string; s
       [
         {
           role: "system",
-          content:
-            "You rewrite customer-support email drafts for Cute Things (a small online baby and children's store) following a staff member's instruction. Return only the rewritten email, with no commentary, markers or quotes. Keep every fact from the draft unless the instruction changes it; don't add facts, prices, dates or promises. Never say the store did or will refund, cancel, ship, replace or change anything. Keep it warm and short, signed \"Cute Things Support\".",
+          content: `You rewrite customer-support email drafts for ${storeIntro()} following a staff member's instruction. Return only the rewritten email, with no commentary, markers or quotes. Keep every fact from the draft unless the instruction changes it; don't add facts, prices, dates or promises. Never say the store did or will refund, cancel, ship, replace or change anything. Keep it warm and short, signed "${storeSettings().senderName}".`,
         },
         {
           role: "user",
