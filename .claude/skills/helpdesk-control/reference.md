@@ -15,11 +15,10 @@ browser ──https──▶ Caddy (helpdesk.teddyonfriday.com, Let's Encrypt; s
 
 systemd "support-tickets-worker" (scripts/worker.ts)
    draft queue → Workers AI drafter (read-only tools) → drafts for review
-   every minute: owner alerts, ops monitor; 6 h: backups; daily: product sync, learning, pruning
+   every minute: owner alerts, ops monitor; 6 h: encrypted backups → data/backups/ → bucket (BACKUP_S3_URL); daily: product sync, learning, pruning
 systemd timer "support-tickets-heartbeat" (scripts/heartbeat-check.ts): emails if the worker stops
 
 scripts/simulate.mjs ──▶ D1 (#S orders) ──▶ /api/helpdesk/sim/* (bearer key: opens tickets)
-scripts/backup-db.mjs ──▶ data/backups/*.db.gz ──▶ S3-compatible bucket (BACKUP_S3_URL), nightly timer
 ```
 
 - **App**: Next.js 16, TypeScript, `node:sqlite` (Node 22+). `lib/db.ts` opens each database once per process and applies `lib/sim-migrations.ts` on open.
@@ -77,7 +76,7 @@ Ticket status: a customer message sets `open` (and wakes a snooze), an agent rep
 | `HELPDESK_PUBLIC_URL` (optional) | links in alert emails, default `https://helpdesk.teddyonfriday.com` |
 | `BACKUP_RECIPIENT_CERT` (optional) | backup certificate, default `data/backup-keys/recipient.pem` |
 | `HELPDESK_DATA_DIR`, `HELPDESK_KB_DIR` (optional) | data folders (tests use scratch folders) |
-| `BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` (optional) | off-box database copies (`npm run backup`): bucket URL (R2: `https://<account>.r2.cloudflarestorage.com/<bucket>`) and its S3 API keys. Without them those copies stay on this machine |
+| `BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | off-site copies of the encrypted backups: bucket URL (R2: `https://<account>.r2.cloudflarestorage.com/<bucket>`) and a token for that bucket only. Without them backups stay on this machine and `ops` shows `offsiteBackups` failing |
 | `BACKUP_S3_REGION`, `BACKUP_S3_PREFIX` (optional) | `auto` (R2, default) or the AWS region; object key prefix, default `helpdesk/` |
 
 The server and worker read `.env.local` at startup: restart both after changing it.
@@ -89,11 +88,10 @@ The server and worker read `.env.local` at startup: restart both after changing 
 - **Worker**: `npm run helpdesk -- worker` (heartbeat, queue, last run of each task). Logs: `sudo journalctl -u support-tickets-worker -f`. Run by hand: `npm run worker`.
 - **Knowledge base**: `npm run kb -- import <dir> | index | products | search <q> | status`. Edits from the `/kb` page need "Re-index" (or the nightly product sync) to reach the AI.
 - **Ops monitor**: `npm run helpdesk -- ops`; the worker writes `data/ops-status.json` every minute (shown on `/overview`).
-- **Encrypted backups** (the worker): one-time `npm run helpdesk -- backup-setup`, then move the private key off the server. The worker backs up every 6 h to `data/backups/` (newest 8 kept). `npm run helpdesk -- backup | backups`. Verify: `npm run helpdesk -- restore-check <file> --key <private key>` (decrypts into a temp folder, checks integrity and checksums, never touches live data). Restoring for real: stop both services, decrypt (`openssl cms -decrypt -binary -inform DER -in <file> -inkey <key> -out b.tar.gz`), extract, copy `sim.db`, `kb.db`, `kb/` into `data/`, start the services.
+- **Backups**: encrypted, every 6 h by the worker, uploaded to the bucket; see [Backups and restore](#backups-and-restore).
 - **Alerts**: set `ALERT_EMAIL`, send a test from `/alerts`. The heartbeat timer emails when the worker stops and when it recovers.
 - **Tests**: `npm test` (scratch data, fake AI/SES/store, nothing sent); `npm run verify` runs the full release gate.
 - **Simulated store rows**: `SELECT * FROM orders WHERE name LIKE '#S%'` on D1 `shop-sim` (read-only).
-- **Database copies to a bucket**: `npm run backup` (nightly via `helpdesk-backup.timer`); see [Backups and restore](#backups-and-restore). Both kinds share `data/backups/` under different names (`helpdesk-*.tar.gz.cms` vs `<db>-<time>.db.gz`) and prune only their own.
 - **Logs**: `npm run helpdesk -- logs 200` or `sudo journalctl -u support-tickets -f`.
 - Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs under systemd as `svvi-caddy.service` (enabled, so it starts at boot; `Restart=on-failure`). The unit was set up for the SVVI viewer and serves this site from the same Caddyfile: don't disable or rename it. Validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo systemctl reload svvi-caddy`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
 - Search-engine blocking: `app/robots.ts`, robots meta in `app/layout.tsx`, `X-Robots-Tag` in `next.config.ts` and Caddy.
@@ -101,28 +99,30 @@ The server and worker read `.env.local` at startup: restart both after changing 
 
 ## Backups and restore
 
-`scripts/backup-db.mjs` (`npm run backup`) backs up `data/sim.db` (real inbound customer emails, agent replies, the email outbox) and `data/helpdesk.db` (the seeded export). Each DB is copied online with `VACUUM INTO`, which gives a consistent snapshot while the app writes. Never `cp` these files: they use WAL, so a plain copy can miss committed data or be corrupt. The copy is integrity-checked, gzipped to `data/backups/<db>-<UTC time>.db.gz` (mode 600) and uploaded to the bucket in `BACKUP_S3_URL` with signed checksums (until all three `BACKUP_S3_` keys are set, the upload is skipped, not failed). Local copies older than 14 days are deleted (`--keep-days N`), always keeping each DB's newest copy; the bucket expires old copies with its own lifecycle rule. `data/backups/last-run.json` records the last run, and `npm run helpdesk -- status` shows its age and whether the upload was done, skipped or failed. A failed DB or upload makes the run exit 1 (the timer shows as failed).
+`lib/ops/backup.ts`. Every 6 hours the worker (and `npm run helpdesk -- backup` on demand) takes online SQLite backups of `data/sim.db` (tickets, real customer emails, staff, drafts, lessons) and `data/kb.db`, copies the `data/kb/` articles, writes a manifest with checksums, and encrypts the tar.gz with OpenSSL CMS (AES-256-GCM) to the certificate in `data/backup-keys/recipient.pem`. The server holds only that public half: **the private key lives off the server** (password manager or laptop), so neither the server's backups nor the bucket can be read without it. Files: `data/backups/helpdesk-<time>.tar.gz.cms` (mode 600); the newest 8 are kept. `data/helpdesk.db` (the CSV export) is not backed up: `npm run seed` rebuilds it.
+
+After each backup, every local backup the bucket doesn't have yet is uploaded (newest first, with signed checksums), so a failed upload is retried on the next run. Only these encrypted files ever leave the server. Until the three `BACKUP_S3_` keys are set, nothing is uploaded and `ops` shows `offsiteBackups` failing ("local only"); a failed upload doesn't fail the backup itself, `ops` and `status` report it.
 
 | Goal | Command |
 |---|---|
-| Back up now | `npm run backup` (`-- --no-upload` for local only) |
-| Check a backup: gunzip, integrity check, row counts | `npm run backup -- verify data/backups/sim-<time>.db.gz` |
-| Fetch a backup from the bucket (then verifies it) | `npm run backup -- download sim-<time>.db.gz` |
-| Timer status / last runs | `systemctl list-timers helpdesk-backup.timer` · `journalctl -u helpdesk-backup -n 50` |
+| One-time setup: create the key pair | `npm run helpdesk -- backup-setup`, then the user copies the private key off the server and runs the `shred -u` it prints |
+| Back up (and upload) now | `npm run helpdesk -- backup` |
+| List backups; is the newest in the bucket? | `npm run helpdesk -- backups` (also `status`, `ops`) |
+| Check a backup (decrypts into a temp folder; integrity, checksums, row counts; never touches live data) | `npm run helpdesk -- restore-check <file> --key <private key>` |
+| Fetch a backup from the bucket (e.g. on a new server) | `npm run helpdesk -- backup-download helpdesk-<time>.tar.gz.cms` |
 
-**Nightly timer.** `deploy/systemd/helpdesk-backup.service` + `.timer` (03:30 UTC, `Persistent=true` so a missed run happens at boot). Install once, with the user's OK: `sudo cp deploy/systemd/helpdesk-backup.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now helpdesk-backup.timer`, then `sudo systemctl start helpdesk-backup` and check `journalctl -u helpdesk-backup`.
+**Bucket.** Any S3-compatible bucket works. For Cloudflare R2: the private bucket `helpdesk-backups` with a lifecycle rule that deletes objects under `helpdesk/` after 30 days, and an R2 API token scoped to that bucket with Object Read & Write; the user puts its keys in `.env.local` (`BACKUP_S3_*`), then restart (the worker reads them at start). If this machine is lost, `.env.local` goes with it, so keep the bucket keys (and the other keys) in a password manager too, next to the backup private key.
 
-**Off-box copy.** Any S3-compatible bucket works. For Cloudflare R2: a private bucket with a lifecycle rule that deletes objects under `helpdesk/` after 30 days, and an R2 API token scoped to that bucket with Object Read & Write; put its keys in `.env.local` (`BACKUP_S3_*`). If this machine is lost, `.env.local` goes with it, so keep the bucket keys (and the other keys) in a password manager too.
+**Restore** (ask the user first: it replaces live data; the user supplies the private key).
 
-**Restore** (ask the user first: it replaces live data). Shown for `sim.db`; `helpdesk.db` is the same, or rebuild it from the CSVs with `npm run seed`.
+1. Pick a backup and check it: `npm run helpdesk -- backups` (if the machine is gone: `backup-download <file>`), then `restore-check <file> --key <private key>`.
+2. Decrypt and unpack into a private temp folder: `mkdir -m 700 /tmp/restore && openssl cms -decrypt -binary -inform DER -in data/backups/<file> -inkey <private key> -out /tmp/restore/b.tar.gz && tar -xzf /tmp/restore/b.tar.gz -C /tmp/restore`.
+3. Stop the app and the worker: `sudo systemctl stop support-tickets support-tickets-worker`.
+4. Move the live databases aside **with their WAL files**, so an old `-wal` is never applied to the restored copy: `mkdir -p data/pre-restore && mv data/sim.db* data/kb.db* data/pre-restore/` and `mv data/kb data/pre-restore/kb`.
+5. `cp /tmp/restore/sim.db /tmp/restore/kb.db data/ && cp -r /tmp/restore/kb data/kb && chmod 600 data/sim.db data/kb.db`, then `rm -rf /tmp/restore`.
+6. `sudo systemctl start support-tickets support-tickets-worker`, then `npm run helpdesk -- status` and `npm run helpdesk -- tickets`.
 
-1. Pick a copy and check it: `ls -lt data/backups/` (if the machine is gone: `npm run backup -- download <file>`, or download it from the bucket dashboard), then `npm run backup -- verify data/backups/sim-<time>.db.gz`.
-2. Stop the app and the worker: `sudo systemctl stop support-tickets support-tickets-worker`.
-3. Move the live DB aside **with its WAL files**, so an old `-wal` is never applied to the restored copy: `mkdir -p data/pre-restore && mv data/sim.db data/sim.db-wal data/sim.db-shm data/pre-restore/` (a missing `-wal`/`-shm` is fine).
-4. `gunzip -c data/backups/sim-<time>.db.gz > data/sim.db && chmod 600 data/sim.db`
-5. `sudo systemctl start support-tickets support-tickets-worker`, then `npm run helpdesk -- status` and `npm run helpdesk -- tickets`.
-
-Email that arrived after the backup isn't in the restored DB. SES also writes each inbound email to `INBOUND_EMAIL_BUCKET` (`inbound/…`), so look there for anything newer. Restore drill (no downtime): `npm run backup -- verify` on the newest copy.
+Email that arrived after the backup isn't in the restored database. SES also writes each inbound email to `INBOUND_EMAIL_BUCKET` (`inbound/…`), so look there for anything newer. Restore drill (no downtime): `restore-check` on the newest backup.
 
 ## Troubleshooting
 
@@ -138,11 +138,11 @@ Email that arrived after the backup isn't in the restored DB. SES also writes ea
 | KB search returns nothing / "keyword only" | `npm run kb -- status`; re-index; Workers AI keys for embeddings |
 | Customer rail: "isn't connected" / "simulated customers only" | `SHOP_D1_*` keys; real email customers never get store lookups |
 | Alerts "Not emailed" | `ALERT_EMAIL` missing; set it, restart the worker, Retry on `/alerts` |
-| Backups failing | `npm run helpdesk -- ops`; "No backup certificate" → `backup-setup` |
+| Backups failing | `npm run helpdesk -- ops`; "No backup certificate" → `backup-setup` (the user then moves the private key off the server) |
 | `status` says service inactive | `npm run helpdesk -- logs 100`, then `sudo systemctl restart support-tickets` |
 | simulator: `Store database: … not authorized` | the D1 token lost access; it needs Account → D1 → Edit |
 | simulator: `Workers AI` errors / slow | model quota or outage; try `--no-orders --count 1`, or set `CF_MODEL` |
 | everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |
 | UI doesn't show new SIM tickets | the Simulated tab polls every 10 s; confirm with `npm run helpdesk -- tickets` |
-| `status` shows the backup as old, `upload FAILED` or `upload skipped` | `journalctl -u helpdesk-backup -n 50`; `grep -c '^BACKUP_S3_' .env.local` should be 3 or more; run `npm run backup` by hand to see the error |
+| `offsiteBackups` failing: "local only" or "upload failed" | `grep -c '^BACKUP_S3_' .env.local` should be 3 or more (restart the worker after adding them); `npm run helpdesk -- backup` shows the upload error (a 403 means the token isn't scoped to this bucket with Object Read & Write) |
 | site down after a reboot | `systemctl status svvi-caddy support-tickets`; both are enabled and should start at boot |

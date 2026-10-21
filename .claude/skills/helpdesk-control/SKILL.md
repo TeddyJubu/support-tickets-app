@@ -28,8 +28,7 @@ Use `npm run helpdesk -- <command>` for everything day to day. Add `--json` to a
 | AI worker, draft queue, scheduled tasks | `npm run helpdesk -- worker` |
 | Ops report (services, queue, disk, backups, KB) | `npm run helpdesk -- ops` |
 | Staff accounts | `npm run helpdesk -- user list` · `user add <name> --name "Full Name" [--owner]` · `user password <name>` · `user disable <name>` |
-| Encrypted backups (worker, every 6 h) | `npm run helpdesk -- backups` · `backup` · `restore-check <file> --key <private key>` |
-| Database copies to the bucket (nightly timer) / check one | `npm run backup` · `npm run backup -- verify data/backups/sim-<time>.db.gz` |
+| Encrypted backups (worker every 6 h, uploaded to the bucket) | `npm run helpdesk -- backups` · `backup` · `restore-check <file> --key <private key>` · `backup-download <file>` |
 | Knowledge base | `npm run kb -- status` · `search <question>` · `index` · `products` |
 
 ## Customer simulator

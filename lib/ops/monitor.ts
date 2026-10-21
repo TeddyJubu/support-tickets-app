@@ -1,5 +1,5 @@
 // Read-only ops monitor, run by the worker every minute: services, readiness, the draft
-// queue, disk space, backup age, KB freshness, failed alerts. Writes data/ops-status.json
+// queue, disk space, backup age and off-site copy, KB freshness, failed alerts. Writes data/ops-status.json
 // (and the database) for the Overview page and `helpdesk status`. It reports; it never
 // repairs or restarts anything.
 
@@ -11,7 +11,7 @@ import { readiness } from "../health";
 import { getDb } from "../sim-db";
 import { queueStats } from "../drafting/queue";
 import { kbHealth } from "../kb/health";
-import { listBackups } from "./backup";
+import { listBackups, offsiteStatus } from "./backup";
 import { getState, setState, workerHealth } from "../worker/state";
 
 export const OPS_STALE_SECONDS = 180;
@@ -58,6 +58,14 @@ export function collectOpsStatus() {
   checks.backups = latest
     ? { ok: backupAge! <= BACKUP_MAX_AGE_HOURS && lastRun?.value.ok !== false, detail: `latest ${Math.round(backupAge! * 10) / 10} h ago${lastRun?.value.ok === false ? `; last run failed: ${lastRun.value.error}` : ""}` }
     : { ok: false, detail: lastRun?.value.error ?? "no backup yet" };
+  const off = offsiteStatus();
+  checks.offsiteBackups = !off.configured
+    ? { ok: false, detail: `local only: ${off.missing.join(", ")} not set in .env.local` }
+    : !off.latest
+      ? { ok: false, detail: "no backup to upload yet" }
+      : off.latestUploaded
+        ? { ok: true, detail: "latest uploaded" }
+        : { ok: false, detail: off.error ? `upload failed: ${off.error}` : "latest backup not uploaded yet" };
 
   const kb = kbHealth();
   checks.knowledgeBase = {

@@ -4,18 +4,21 @@
 //   2. tar.gz, encrypted with OpenSSL CMS (AES-256-GCM) to a recipient certificate, so the
 //      server holds only the public half; the private key belongs off the server
 //   3. keep the newest 8 (two days), at least 3
+//   4. upload every encrypted backup the bucket doesn't have yet (see "Off-site copies" below)
 // helpdesk.db (the CSV export) is not included: it is rebuilt with npm run seed.
 
 import { backup, DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { AwsClient } from "aws4fetch";
 import { dataDir, schemaVersion } from "../db";
 import { getDb } from "../sim-db";
 import { kbDbPath } from "../kb/index";
 import { kbDir } from "../kb/files";
+import { getState, setState } from "../worker/state";
 
 const KEEP = 8;
 export const backupDir = () => join(dataDir(), "backups");
@@ -94,10 +97,116 @@ export async function runBackup() {
     // Keep the newest KEEP (never fewer than 3)
     const all = listBackups();
     for (const old of all.slice(Math.max(KEEP, 3))) rmSync(join(backupDir(), old.file), { force: true });
-    return { file: basename(out), bytes: statSync(out).size, tickets: manifest.tickets, schema: manifest.schema };
+    const result = { file: basename(out), bytes: statSync(out).size, tickets: manifest.tickets, schema: manifest.schema };
+    // A failed upload doesn't fail the backup: the ops monitor reports it, and the next run retries
+    const offsite = await uploadPending();
+    return { ...result, upload: offsite.upload, ...(offsite.error ? { uploadError: offsite.error } : {}) };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+// Off-site copies: the encrypted backups are uploaded to an S3-compatible bucket (Cloudflare
+// R2 or AWS S3). Only these .cms files leave the server, so the bucket (and its token) never
+// holds readable customer data. Configure in .env.local:
+//   BACKUP_S3_URL                 https://<account>.r2.cloudflarestorage.com/<bucket>
+//   BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY   a token for that bucket only
+//   BACKUP_S3_REGION              "auto" for R2 (default), else the AWS region
+//   BACKUP_S3_PREFIX              object key prefix (default "helpdesk/")
+// The bucket deletes old copies with its own lifecycle rule.
+
+const BUCKET_KEYS = ["BACKUP_S3_URL", "BACKUP_S3_ACCESS_KEY_ID", "BACKUP_S3_SECRET_ACCESS_KEY"] as const;
+const BACKUP_FILE = /^helpdesk-[\w-]+\.tar\.gz\.cms$/;
+const OFFSITE_STATE = "offsite-backup";
+type OffsiteState = { uploaded: string[]; error: string | null };
+
+const missingBucketKeys = () => BUCKET_KEYS.filter((k) => !process.env[k]);
+
+function bucket() {
+  const missing = missingBucketKeys();
+  if (missing.length) return { ok: false as const, missing };
+  const client = new AwsClient({
+    accessKeyId: process.env.BACKUP_S3_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.BACKUP_S3_SECRET_ACCESS_KEY!,
+    region: process.env.BACKUP_S3_REGION || "auto",
+    service: "s3",
+  });
+  const prefix = process.env.BACKUP_S3_PREFIX ?? "helpdesk/";
+  const base = process.env.BACKUP_S3_URL!.replace(/\/$/, "");
+  return {
+    ok: true as const,
+    key: (file: string) => `${prefix}${file}`,
+    fetch: (file: string, init?: RequestInit) => client.fetch(`${base}/${prefix}${file}`, init),
+  };
+}
+
+const errorText = (err: unknown) => {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+  return `${err instanceof Error ? err.message : String(err)}${cause ? ` (${cause.code ?? cause.message})` : ""}`;
+};
+
+/** Uploads the local backups the bucket doesn't have yet, newest first. Never throws. */
+export async function uploadPending(): Promise<{ upload: "done" | "skipped" | "failed"; uploaded: string[]; error?: string }> {
+  const remote = bucket();
+  if (!remote.ok) return { upload: "skipped", uploaded: [], error: `${remote.missing.join(", ")} not set` };
+  const local = listBackups().map((b) => b.file);
+  const done = new Set((getState<OffsiteState>(OFFSITE_STATE)?.value.uploaded ?? []).filter((f) => local.includes(f)));
+  const uploaded: string[] = [];
+  try {
+    for (const file of local) {
+      if (done.has(file)) continue;
+      const body = readFileSync(join(backupDir(), file));
+      const res = await remote.fetch(file, {
+        method: "PUT",
+        body: new Uint8Array(body),
+        // Signed checksums: the bucket rejects a body that doesn't match
+        headers: {
+          "content-type": "application/pkcs7-mime",
+          "content-md5": createHash("md5").update(body).digest("base64"),
+          "x-amz-content-sha256": createHash("sha256").update(body).digest("hex"),
+        },
+      });
+      if (!res.ok) throw new Error(`${remote.key(file)}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
+      done.add(file);
+      uploaded.push(file);
+    }
+    setState(OFFSITE_STATE, { uploaded: [...done], error: null } satisfies OffsiteState);
+    return { upload: "done", uploaded };
+  } catch (err) {
+    const error = errorText(err);
+    setState(OFFSITE_STATE, { uploaded: [...done], error } satisfies OffsiteState);
+    return { upload: "failed", uploaded, error };
+  }
+}
+
+/** Whether the newest backup is in the bucket, for the ops monitor and `helpdesk status` */
+export function offsiteStatus() {
+  const missing = missingBucketKeys();
+  const latest = listBackups()[0]?.file ?? null;
+  const state = getState<OffsiteState>(OFFSITE_STATE);
+  return {
+    configured: missing.length === 0,
+    missing,
+    latest,
+    latestUploaded: !!latest && !!state?.value.uploaded.includes(latest),
+    error: state?.value.error ?? null,
+    checkedAt: state?.updatedAt ?? null,
+  };
+}
+
+/** Fetches an encrypted backup from the bucket into the backup folder, for restore-check and restores */
+export async function downloadBackup(file: string) {
+  if (!BACKUP_FILE.test(file)) throw new Error(`Not a backup file name: ${file}`);
+  const remote = bucket();
+  if (!remote.ok) throw new Error(`${remote.missing.join(", ")} not set in .env.local`);
+  const res = await remote.fetch(file);
+  if (!res.ok) throw new Error(`${remote.key(file)}: HTTP ${res.status}`);
+  mkdirSync(backupDir(), { recursive: true, mode: 0o700 });
+  const path = join(backupDir(), file);
+  const tmp = `${path}.partial`;
+  writeFileSync(tmp, new Uint8Array(await res.arrayBuffer()), { mode: 0o600 });
+  renameSync(tmp, path);
+  return path;
 }
 
 /**
