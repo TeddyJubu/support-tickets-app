@@ -12,7 +12,7 @@ import { after } from "node:test";
 export const root = new URL("..", import.meta.url);
 
 for (const k of Object.keys(process.env)) {
-  if (/AWS|OUTBOUND_EMAIL|INBOUND_|CLOUDFLARE|SHOP_|CF_MODEL|ALERT_/.test(k)) delete process.env[k];
+  if (/AWS|OUTBOUND_EMAIL|INBOUND_|CLOUDFLARE|SHOP_|CF_MODEL|ALERT_|BACKUP_/.test(k)) delete process.env[k];
 }
 
 export const scratch = mkdtempSync(join(tmpdir(), "helpdesk-test-"));

@@ -18,7 +18,8 @@
 //   worker                          worker heartbeat, draft queue and scheduled tasks
 //   ops                             latest ops monitor report (services, queue, disk, backups, KB)
 //   backup-setup                    create the backup key pair (then move the private key off the server)
-//   backup | backups                make an encrypted backup now | list backups
+//   backup | backups                make an encrypted backup now (and upload it) | list backups
+//   backup-download <file>          fetch an encrypted backup from the bucket (for restores)
 //   restore-check <file> --key <private key>   decrypt and verify a backup in a temp folder
 //   user list                       staff accounts
 //   user add <username> [--name "Full Name"] [--email E] [--owner]   asks for the password
@@ -91,6 +92,17 @@ function ticketLine(t) {
   return `${t.id.padEnd(10)} ${state.padEnd(8)} ${(t.createdAt ?? "").slice(0, 16).padEnd(17)} ${who.slice(0, 22).padEnd(23)} ${t.subject ?? "(no subject)"}`;
 }
 
+// Backups and the ops monitor read their settings (BACKUP_S3_*) from process.env
+async function backupLib() {
+  (await import("./env.ts")).loadEnv(root);
+  return import("../lib/ops/backup.ts");
+}
+
+const ago = (iso) => {
+  const h = Math.round((Date.now() - Date.parse(iso)) / 3600e3);
+  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+};
+
 const commands = {
   async status() {
     let service = "unknown";
@@ -115,11 +127,16 @@ const commands = {
     ]);
     const c = sim.counts ?? {};
     const byStatus = { open: c.open ?? 0, pending: c.pending ?? 0, closed: c.closed ?? 0 };
-    let backup = null;
-    try {
-      backup = JSON.parse(readFileSync(join(root, "data/backups/last-run.json"), "utf8"));
-    } catch {}
-    const backupAge = backup && Math.round((Date.now() - Date.parse(backup.at)) / 3600e3);
+    const { listBackups, offsiteStatus } = await backupLib();
+    const latestBackup = listBackups()[0] ?? null;
+    const offsite = offsiteStatus();
+    const upload = offsite.latestUploaded
+      ? "uploaded"
+      : !offsite.configured
+        ? "local only (no bucket keys)"
+        : offsite.error
+          ? `upload FAILED: ${offsite.error}`
+          : "not uploaded yet";
     const data = {
       service,
       ready: ready ? ready.ready : null,
@@ -129,7 +146,7 @@ const commands = {
       inboxTickets: { total: sim.total, simulated: simOnly.total, email: emailOnly.total, ...byStatus },
       historicalTickets: hist.total,
       model: env.CF_MODEL || "@cf/zai-org/glm-5.3-flash",
-      backup: backup && { at: backup.at, upload: backup.upload },
+      backup: latestBackup && { at: latestBackup.createdAt, file: latestBackup.file, uploaded: offsite.latestUploaded, uploadError: offsite.error },
     };
     out(data, () =>
       [
@@ -140,7 +157,7 @@ const commands = {
         `inbox        ${sim.total} tickets: ${simOnly.total} simulated, ${emailOnly.total} email (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(", ")})`,
         `history      ${hist.total} tickets`,
         `model        ${data.model}`,
-        `backup       ${backup ? `${backupAge < 48 ? `${backupAge}h` : `${Math.round(backupAge / 24)}d`} ago, ${{ done: "uploaded", skipped: "upload skipped (no bucket keys)" }[backup.upload] ?? "upload FAILED"}` : "none yet (npm run backup)"}`,
+        `backup       ${latestBackup ? `${ago(latestBackup.createdAt)} ago, encrypted, ${upload}` : "none yet (npm run helpdesk -- backup-setup)"}`,
       ].join("\n"),
     );
   },
@@ -251,6 +268,7 @@ const commands = {
   },
 
   async ops() {
+    await backupLib();
     const { collectOpsStatus } = await import("../lib/ops/monitor.ts");
     const status = collectOpsStatus();
     out(status, () =>
@@ -269,15 +287,30 @@ const commands = {
   },
 
   async backup() {
-    const { runBackup } = await import("../lib/ops/backup.ts");
+    const { runBackup } = await backupLib();
     const r = await runBackup();
-    out(r, () => `backup ${r.file} (${Math.round(r.bytes / 1024)} KB, ${r.tickets} tickets, schema ${r.schema})`);
+    const upload = { done: "uploaded", skipped: `not uploaded: ${r.uploadError}` }[r.upload] ?? `upload FAILED: ${r.uploadError}`;
+    out(r, () => `backup ${r.file} (${Math.round(r.bytes / 1024)} KB, ${r.tickets} tickets, schema ${r.schema}), ${upload}`);
+    if (r.upload === "failed") process.exitCode = 1;
   },
 
   async backups() {
-    const { listBackups } = await import("../lib/ops/backup.ts");
+    const { listBackups, offsiteStatus } = await backupLib();
     const list = listBackups();
-    out(list, () => list.map((b) => `${b.createdAt}  ${String(Math.round(b.bytes / 1024)).padStart(6)} KB  ${b.file}`).join("\n") || "no backups yet");
+    const { latest, latestUploaded, configured } = offsiteStatus();
+    out(list, () =>
+      [
+        ...list.map((b) => `${b.createdAt}  ${String(Math.round(b.bytes / 1024)).padStart(6)} KB  ${b.file}`),
+        list.length ? `newest ${latest} is ${latestUploaded ? "in the bucket" : configured ? "NOT in the bucket yet" : "local only (no bucket keys)"}` : "no backups yet",
+      ].join("\n"),
+    );
+  },
+
+  // For restores: fetch a backup from the bucket (e.g. on a new server), then restore-check it
+  async "backup-download"(file = need(rest[0], "backup-download <helpdesk-….tar.gz.cms>")) {
+    const { downloadBackup } = await backupLib();
+    const path = await downloadBackup(file);
+    out({ path }, () => `downloaded to ${path}\nCheck it: npm run helpdesk -- restore-check ${file} --key <private key>`);
   },
 
   async "restore-check"(file = need(rest[0], "restore-check <file> --key <private key>")) {
