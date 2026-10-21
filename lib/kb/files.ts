@@ -124,7 +124,7 @@ export function listArticles(folders: string[] = FOLDERS): Article[] {
 export function readArticle(path: string) {
   const safe = safePath(path);
   if (!safe) return null;
-  const full = join(kbDir(), safe);
+  const full = join(/*turbopackIgnore: true*/ kbDir(), safe);
   if (!existsSync(full)) return null;
   return parseArticle(safe, readFileSync(full, "utf8"), statSync(full).mtimeMs);
 }
@@ -137,7 +137,7 @@ export function writeArticle(path: string, raw: string, opts: { create?: boolean
   const safe = safePath(path, EDITABLE_FOLDERS);
   if (!safe) throw new Error("Articles can only be saved in intents, faq, policies or tickets, as name.md");
   if (raw.length > 200_000) throw new Error("Article is too long (200 KB max)");
-  const full = join(kbDir(), safe);
+  const full = join(/*turbopackIgnore: true*/ kbDir(), safe);
   const exists = existsSync(full);
   if (opts.create && exists) throw new Error("An article with that name already exists");
   if (!opts.create && !exists) throw new Error("Article not found");

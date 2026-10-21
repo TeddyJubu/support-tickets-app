@@ -55,8 +55,10 @@ export function collectOpsStatus() {
   const latest = listBackups()[0];
   const backupAge = latest ? (Date.now() - Date.parse(latest.createdAt)) / 3600e3 : null;
   const lastRun = getState<{ ok: boolean; error?: string }>("task:backup");
+  // A failed run only counts if nothing has backed up since (a manual backup fixes it)
+  const failedRun = lastRun?.value.ok === false && (!latest || Date.parse(lastRun.updatedAt) > Date.parse(latest.createdAt)) ? lastRun : null;
   checks.backups = latest
-    ? { ok: backupAge! <= BACKUP_MAX_AGE_HOURS && lastRun?.value.ok !== false, detail: `latest ${Math.round(backupAge! * 10) / 10} h ago${lastRun?.value.ok === false ? `; last run failed: ${lastRun.value.error}` : ""}` }
+    ? { ok: backupAge! <= BACKUP_MAX_AGE_HOURS && !failedRun, detail: `latest ${Math.round(backupAge! * 10) / 10} h ago${failedRun ? `; last run failed: ${failedRun.value.error}` : ""}` }
     : { ok: false, detail: lastRun?.value.error ?? "no backup yet" };
   const off = offsiteStatus();
   checks.offsiteBackups = !off.configured

@@ -19,7 +19,8 @@ const connections = new Map<string, DatabaseSync>();
 const depth = new WeakMap<DatabaseSync, number>();
 
 export function openDatabase(file: string, migrations: Migration[]) {
-  const path = join(dataDir(), file);
+  // Runtime data folder: keep the bundler from tracing (and shipping) the whole project
+  const path = join(/*turbopackIgnore: true*/ dataDir(), file);
   const open = connections.get(path);
   if (open) return open;
   mkdirSync(dataDir(), { recursive: true });
