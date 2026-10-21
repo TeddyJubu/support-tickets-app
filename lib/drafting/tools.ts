@@ -1,10 +1,11 @@
 // Read-only tools the drafting model may call. Nothing here can change a ticket, an order
-// or anything outside the helpdesk; orders are limited to the ticket's own simulated ones.
+// or anything outside the helpdesk; orders are limited to the ticket sender's own, read from
+// Shopify only for verified email senders (simulated tickets have none).
 
 import type { ChatTool } from "../workers-ai";
 import { searchKb } from "../kb/search";
-import { getDb, isSimOrder } from "../sim-db";
-import { getOrderByName, storeConfig } from "../store-d1.mjs";
+import { getDb } from "../sim-db";
+import { orderForTicket } from "../store";
 import { neutralize } from "./markers";
 import { returnsForTicket } from "../returns";
 
@@ -40,7 +41,7 @@ export const TOOLS: ChatTool[] = [
       description: "Look up the order this ticket is about: items, payment and shipping status, tracking, refunds.",
       parameters: {
         type: "object",
-        properties: { order_name: { type: "string", description: "Order name like #S1001; defaults to the ticket's order" } },
+        properties: { order_name: { type: "string", description: "Order name like #1001; defaults to the order this ticket is about" } },
       },
     },
   },
@@ -98,34 +99,33 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: ToolCo
     });
   }
   if (name === "get_order") {
-    const orderName = String(args.order_name || ctx.orderName || "").trim();
-    if (!orderName) return JSON.stringify({ error: "This ticket has no order on file. Ask the customer for their order number if it matters." });
-    // Only this ticket's order or another order on the same customer's tickets: never another
-    // customer's, and never a real order (the store holds real customer data)
-    const ownOrder =
-      orderName === ctx.orderName ||
-      (!!ctx.customerId && !!getDb().prepare(`SELECT 1 FROM sim_tickets WHERE customer_id = ? AND order_name = ?`).get(ctx.customerId, orderName));
-    if (!/^#S\d+$/.test(orderName) || !ownOrder || !isSimOrder(orderName)) {
-      return JSON.stringify({ error: `Order ${clip(orderName, 30)} isn't available to look up for this customer` });
+    // Only the ticket sender's own orders (checked in Shopify by customer); with no name, the
+    // order the ticket is about. Just what a reply needs: no address, phone or payment details.
+    const wanted = String(args.order_name ?? "").trim();
+    const out = await orderForTicket(ctx.ticketId, wanted || null);
+    if (!("order" in out)) {
+      return JSON.stringify({
+        error: clip(out.error, 300),
+        recent_orders: out.recent?.map((o) => `${clip(o.name, 40)}${o.placedAt ? ` (placed ${o.placedAt.slice(0, 10)})` : ""}`),
+      });
     }
-    const config = storeConfig(process.env);
-    if (!config) return JSON.stringify({ error: "The store isn't connected" });
-    const order = await getOrderByName(config, orderName);
-    if (!order) return JSON.stringify({ error: "Order not found" });
+    const order = out.order;
+    const money = (v: number | null) =>
+      v == null ? "unavailable" : !order.currency || order.currency === "USD" ? `$${v.toFixed(2)}` : `${v.toFixed(2)} ${order.currency}`;
     return JSON.stringify({
-      name: order.name,
-      placed: order.created_at,
-      total: order.total_price,
-      payment: order.financial_status,
-      fulfillment: order.fulfillment_status ?? "unfulfilled",
-      cancelled: order.cancelled_at ?? null,
-      items: order.line_items.map((l: { quantity: number; title: string; price: string }) => `${l.quantity}× ${clip(l.title, 120)} ($${l.price})`),
-      shipments: order.fulfillments.map((f: { status: string; tracking_company: string | null; tracking_number: string | null }) => ({
-        status: f.status,
-        carrier: f.tracking_company,
-        tracking: f.tracking_number,
+      name: clip(order.name, 40),
+      placed: order.placedAt,
+      total: money(order.total),
+      payment: order.payment ?? "unavailable",
+      fulfillment: order.fulfillment ?? "unfulfilled",
+      cancelled: order.cancelledAt,
+      items: order.items.map((l) => `${l.quantity}× ${clip(l.title, 120)} (${money(l.price)})`),
+      shipments: order.shipments.map((f) => ({
+        status: f.shipmentStatus ?? f.status,
+        carrier: f.carrier ? clip(f.carrier, 60) : null,
+        tracking: f.tracking ? clip(f.tracking, 60) : null,
       })),
-      refunded: order.refunds.flatMap((r: { transactions: Array<{ amount: string }> }) => r.transactions).reduce((s: number, t: { amount: string }) => s + Number(t.amount), 0),
+      refunded: money(order.refunded),
     });
   }
   if (name === "get_returns") {

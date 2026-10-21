@@ -70,6 +70,8 @@ export async function POST(request: Request) {
     tags: "email",
     channel: "email",
     assigneeId: user.id,
+    // Staff typed the address: its Shopify orders may be shown
+    senderVerified: true,
   });
   audit(user.username, "ticket_create", id, { channel: "email" });
   return Response.json(getSimTicketDetail(id, user.id), { status: 201 });

@@ -334,6 +334,8 @@ export interface SimTicketInput {
   runId?: string | null;
   channel?: "simulator" | "email" | "staff";
   assigneeId?: number | null;
+  /** The sender passed DMARC (or staff opened the ticket): Shopify data may be read for it */
+  senderVerified?: boolean | null;
   /** Who wrote the first message (default: the customer) */
   firstAuthor?: MessageAuthor;
   firstSender?: string;
@@ -360,12 +362,12 @@ export function createSimTicket(input: SimTicketInput) {
     const res = d
       .prepare(
         `INSERT INTO sim_tickets (customer_id, subject, priority, tags, ai_intent, order_name, order_id,
-           source_ticket_id, run_id, channel, assignee_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+           source_ticket_id, run_id, channel, assignee_id, sender_verified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         customerId, input.subject, input.priority ?? "normal", input.tags ?? null, input.aiIntent ?? null,
         input.orderName ?? null, input.orderId ?? null, input.sourceTicketId ?? null, input.runId ?? null,
-        channel, input.assigneeId ?? null,
+        channel, input.assigneeId ?? null, input.senderVerified == null ? null : input.senderVerified ? 1 : 0,
       );
     const id = `SIM-${1000 + Number(res.lastInsertRowid)}`;
     d.prepare(`UPDATE sim_tickets SET id = ? WHERE seq = ?`).run(id, Number(res.lastInsertRowid));
@@ -456,13 +458,6 @@ export function ticketsAwaitingCustomer(limit = 20) {
   return rows.map((r) => getSimTicketDetail(String(r.id))!);
 }
 
-// Order names the simulator attached to tickets (the helpdesk only looks these up in the store)
-export function isSimOrder(orderName: string) {
-  return Boolean(
-    getDb().prepare(`SELECT 1 FROM sim_tickets WHERE order_name = ? LIMIT 1`).get(orderName),
-  );
-}
-
 // Inbound email: one ticket per thread. A known Message-ID is a no-op (SNS retries);
 // In-Reply-To/References, or same sender + same subject on a non-closed ticket, appends.
 const baseSubject = (v: string) => v.replace(/^\s*((re|fwd?|aw)\s*:\s*)+/i, "").trim().toLowerCase();
@@ -496,6 +491,8 @@ export function ingestEmail(input: SimTicketInput & { messageId: string; refs: s
         truncated: input.truncated,
         attachments: input.attachments,
       });
+      // One unverified message hides store data for the whole ticket (it never comes back)
+      if (input.senderVerified === false) d.prepare(`UPDATE sim_tickets SET sender_verified = 0 WHERE id = ?`).run(ticketId);
     } else {
       ticketId = createSimTicket(input);
     }

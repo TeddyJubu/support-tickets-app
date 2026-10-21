@@ -1,7 +1,7 @@
 // Shared test setup. Import this first in every test file:
 //   import { scratch, stubModule, importApp } from "./helpers.mjs";
 // Each test file gets its own empty data folder (HELPDESK_DATA_DIR), and secrets that could
-// reach a real service (AWS, Cloudflare, the demo store) are removed from the environment.
+// reach a real service (AWS, Cloudflare, Shopify) are removed from the environment.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { register } from "node:module";
@@ -12,7 +12,7 @@ import { after } from "node:test";
 export const root = new URL("..", import.meta.url);
 
 for (const k of Object.keys(process.env)) {
-  if (/AWS|OUTBOUND_EMAIL|INBOUND_|CLOUDFLARE|SHOP_|CF_MODEL|ALERT_|BACKUP_/.test(k)) delete process.env[k];
+  if (/AWS|OUTBOUND_EMAIL|INBOUND_|CLOUDFLARE|SHOP_|SHOPIFY|CF_MODEL|ALERT_|BACKUP_/.test(k)) delete process.env[k];
 }
 
 export const scratch = mkdtempSync(join(tmpdir(), "helpdesk-test-"));

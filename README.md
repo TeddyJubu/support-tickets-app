@@ -11,9 +11,9 @@ Operating it: see [AGENTS.md](AGENTS.md) and the `helpdesk-control` skill ([SKIL
 - **Safe sending**: Read & write (30 minutes), review of exactly what goes to whom, confirm with an idempotency key; a newer customer message or a changed reply cancels the review; an unconfirmed send blocks new replies until a person settles it.
 - **Knowledge base**: Markdown articles in `data/kb/` with hybrid search (keywords + multilingual embeddings), an editor, product articles synced daily from the catalog, a Notice Board that overrides articles, and a learning loop that turns approved replies into masked examples.
 - **Copilot**: the side-panel chat with tools for the KB, customers, products, orders, similar tickets and drafting.
-- **Customer rail**: the simulated store customer's order, items, shipping, refunds, order history and returns, cached with a stale fallback.
+- **Customer rail**: the email sender's Shopify customer record, matched order, items, shipping, refunds and order history (read-only, verified senders' own orders only), cached with a stale fallback.
 - **Operations**: owner alert emails for urgent tickets, a worker heartbeat check, notifications, an Overview page, an ops monitor, encrypted backups with restore checks.
-- **Test system**: a customer simulator (`npm run simulate`) and a private demo store (Cloudflare D1) with simulated orders.
+- **Test system**: a customer simulator (`npm run simulate`); simulated tickets have no store data.
 
 ## Development
 

@@ -1,7 +1,7 @@
 "use client";
 
 // Store facts for the open ticket's customer: the matched order, returns and exchanges, and
-// order history, read from the demo store. Missing amounts say "unavailable", never $0.
+// order history, read from the Shopify store. Missing amounts say "unavailable", never $0.
 
 import { useCallback, useEffect, useState } from "react";
 import { Package, Truck, RotateCcw, RefreshCw, AlertTriangle, ArrowRightLeft, CreditCard, Gift } from "lucide-react";

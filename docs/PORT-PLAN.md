@@ -8,7 +8,7 @@ Source survey: four read-only agent reviews of the Shopify repo (2026-10-19), sp
 
 - Same stack: TypeScript in `app/` and `lib/`, Node scripts in `scripts/`, data in `data/*.db`. No Python, no Hermes, no new database server.
 - Schema changes go through one migration helper (task 0.1), never ad-hoc `CREATE TABLE` edits.
-- Existing hard rules still apply (AGENTS.md): no secrets printed; only simulated rows in the demo store; no public endpoint that exposes store or customer data; ask before Caddy/systemd/Cloudflare changes or data resets.
+- Existing hard rules still apply (AGENTS.md): no secrets printed; only simulated rows in the demo store (now: Shopify, read-only); no public endpoint that exposes store or customer data; ask before Caddy/systemd/Cloudflare changes or data resets.
 - Every task ends with: tests for it, `npm run lint`, `npm run build`, and an updated `reference.md` / CLI if the operator surface changed.
 - One PR per phase (or per task for the big ones), merged in phase order.
 
@@ -22,7 +22,7 @@ Source survey: four read-only agent reviews of the Shopify repo (2026-10-19), sp
 | Hermes runtime, SOUL/skill files as code | Replaced by a Workers AI drafter in TypeScript. The persona/grounding rules are rewritten as our system prompt. |
 | Warehouse safety patch, Shopify content-write monitor | Belong to a different app. |
 | Retired feedback collector, Fable prototype | Retired upstream. |
-| Live Shopify Admin API, live Redo API | This is a test system: Shopify data comes from the demo store (D1) and exports; returns are simulated (see 6.3). |
+| Live Redo API | Returns are simulated (see 6.3). Shopify data first came from the demo store (D1); store reads now use the Shopify Admin API, read-only (`lib/shopify.ts`). |
 
 ## Decisions to confirm before starting
 
@@ -77,7 +77,7 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 - [x] **4.3 Triage classifier (M).** Port the rule tables from `processor/classifier/tables/*.yaml` (regex rules, already JSON) into `lib/classifier/`. Escalate-only: can raise priority, force a sensitive draft or an owner alert, never lower. Runs before and after the model.
 - [x] **4.4 Priority-aware queue (S).** Within a window of 25 jobs, sensitive high/critical customer messages jump ahead.
 - [x] **4.5 Nothing-to-answer gate (S).** Pure thanks/acknowledgements skip drafting and alerts.
-- [x] **4.6 Drafter (L).** Server-side Workers AI call with read-only tools: `search_kb`, `get_order` (demo store, simulated orders only), `get_returns` (simulated), `get_ticket_history`. System prompt rewritten from the Hermes SOUL/skills (KB before answering, notices win, no promises of actions, sensitive-topic rules). Output must be a JSON result (draft, action, severity, missing_facts, staff_next_step) wrapped in markers with a per-run random token; customer-supplied markers neutralised; mismatch fails closed.
+- [x] **4.6 Drafter (L).** Server-side Workers AI call with read-only tools: `search_kb`, `get_order` (demo store, simulated orders only; now the Shopify store, the verified sender's own orders), `get_returns` (simulated), `get_ticket_history`. System prompt rewritten from the Hermes SOUL/skills (KB before answering, notices win, no promises of actions, sensitive-topic rules). Output must be a JSON result (draft, action, severity, missing_facts, staff_next_step) wrapped in markers with a per-run random token; customer-supplied markers neutralised; mismatch fails closed.
 - [x] **4.7 Draft cleaner (S).** Strip self-talk and internal notes, collapse repeats, sentence cap, flag unsupported action claims. Can only shorten or suppress.
 - [x] **4.8 Retries and supersession (M).** Transient failures retry at 30 s then 120 s (max 3); auth/invalid-output/safety failures go to staff. A newer customer message supersedes the older draft. A crash after a draft is saved keeps it.
 - [x] **4.9 Draft UI (M).** Suggestion strip in the conversation: Use draft, Dismiss, Restore, Expand, Copy; states queued / retrying / failed ("AI draft unavailable") with Retry; "Needs staff input" disables Use draft and shows the missing facts.
@@ -93,7 +93,7 @@ Order matters: each phase only depends on earlier ones. Sizes: S ≈ under half 
 
 ### Phase 6 — Customer rail with store data
 
-- [x] **6.1 Customer rail (M).** Right-side rail: customer profile (export + demo store pseudonym), matched order, line items, tracking, refunds, order history; incomplete data shows "unavailable", never 0. Server-side, signed-in only, simulated orders only (existing rule).
+- [x] **6.1 Customer rail (M).** Right-side rail: customer profile (export + demo store pseudonym), matched order, line items, tracking, refunds, order history; incomplete data shows "unavailable", never 0. Server-side, signed-in only, simulated orders only (existing rule; now Shopify, verified senders' own orders only).
 - [x] **6.2 Snapshot cache (S).** Cache store lookups per ticket in `sim.db` with a freshness timestamp ("showing last successful read" on failure).
 - [x] **6.3 Simulated returns (M).** `sim_returns` table; simulator creates a return/exchange record for Return/Exchange intents; rail shows returns only when the order matches the ticket's verified order (Redo-worker rule).
 

@@ -3,7 +3,8 @@ import { Package, MapPin } from "lucide-react";
 interface Order {
   id: string;
   product: string;
-  price: number;
+  /** null: the store didn't return it */
+  price: number | null;
   status: string;
   date: string;
   shippingAddress: string;
@@ -38,7 +39,7 @@ export function OrderDetailsCard({ order }: OrderDetailsCardProps) {
         </div>
         <div className="flex justify-between">
           <span className="text-muted-foreground">Price</span>
-          <span className="font-semibold text-foreground">${order.price}</span>
+          <span className="font-semibold text-foreground">{order.price == null ? "unavailable" : `$${order.price}`}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-muted-foreground">Order Date</span>

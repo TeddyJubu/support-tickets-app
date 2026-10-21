@@ -11,13 +11,13 @@
 //   --interval S     seconds between loop rounds (default 120)
 //   --rounds N       stop the loop after N rounds (default: run until Ctrl+C)
 //   --intent TEXT    only replay tickets whose AI intent contains TEXT (e.g. "Return", "Damaged")
-//   --no-orders      don't place store orders even if the store is configured
 //   --dry-run        print what would be sent without writing anything
 //
 // Reads .env.local: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CF_MODEL (Workers AI),
-// SIM_API_KEY, SIM_HELPDESK_URL (default http://127.0.0.1:3100), and optionally
-// SHOP_D1_TOKEN + SHOP_D1_DATABASE_ID to place orders in the private demo store's
-// database (see lib/store-d1.mjs).
+// SIM_API_KEY, SIM_HELPDESK_URL (default http://127.0.0.1:3100).
+//
+// Simulated customers have no orders: the store is the real Shopify store, which the
+// simulator never writes to, and the helpdesk shows no store data for simulated tickets.
 //
 // Privacy: real customer identities never leave this machine. Each customer gets
 // a stable fake name and an address on the reserved .test domain; only ticket
@@ -28,7 +28,6 @@ import { join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
-import { storeConfig, placeSimOrder } from "../lib/store-d1.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -54,15 +53,12 @@ const { values: args } = parseArgs({
     loop: { type: "boolean", default: false },
     "follow-ups": { type: "boolean", default: false },
     reset: { type: "boolean", default: false },
-    "no-orders": { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
   },
 });
 
 const HELPDESK = (env.SIM_HELPDESK_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
 const MODEL = env.CF_MODEL || "@cf/zai-org/glm-5.3-flash";
-const store = args["no-orders"] ? null : storeConfig(env);
-const useStore = Boolean(store);
 const dryRun = args["dry-run"];
 
 for (const key of ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "SIM_API_KEY"]) {
@@ -149,8 +145,8 @@ async function llm(system, user) {
 const intentLabel = (intent) =>
   (intent ?? "").split("::").filter((p) => p && p !== "Other").join(" / ") || "general question";
 
-// Historical order numbers in subjects are swapped for the simulated order (or dropped)
-function rewriteSubject(subject, orderName, intent) {
+// Historical order numbers in subjects are dropped (simulated customers have no orders)
+function rewriteSubject(subject, intent) {
   const core = (subject ?? "")
     .replace(/^((re|fwd?|fw)\s*:\s*)+/i, "")
     .replace(/\s*#?\s*\b\d{6,}\b/g, "")
@@ -160,12 +156,12 @@ function rewriteSubject(subject, orderName, intent) {
   if (
     core.length < 4 ||
     /^new customer message/i.test(core) ||
-    (hadOrderNumber && !orderName) // can't reference a real order number without a simulated order
+    hadOrderNumber // can't reference a real order number
   ) {
-    return `${intentLabel(intent)}${orderName ? ` – ${orderName}` : ""}`;
+    return intentLabel(intent);
   }
   return (subject || "Question about my order")
-    .replace(/\s*#?\s*\b\d{6,}\b/g, orderName ? ` ${orderName}` : "")
+    .replace(/\s*#?\s*\b\d{6,}\b/g, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s+([.,:!?])/g, "$1")
     .trim();
@@ -174,15 +170,6 @@ function rewriteSubject(subject, orderName, intent) {
 // Gorgias housekeeping tags say nothing about the customer's problem
 const meaningfulTags = (tags) =>
   (tags ?? "").split(",").map((t) => t.trim()).filter((t) => t && !/^auto-close$/i.test(t)).join(", ");
-
-// ------------------------------------------------------------------ store
-async function placeOrder(persona) {
-  if (dryRun) return { name: "#DRYRUN", id: 0, line_items: [{ title: "(dry run item)", quantity: 1 }] };
-  // Real prices come from the product export (the store's variant prices are all 0)
-  const priceFor = (handle) =>
-    history.prepare("SELECT price_min FROM products WHERE handle = ?").get(handle)?.price_min ?? null;
-  return placeSimOrder(store, persona, priceFor);
-}
 
 // ---------------------------------------------------------------- tickets
 function sourceTickets(count) {
@@ -215,16 +202,7 @@ Write ONLY the email body: no subject line, no markdown, no placeholders like [n
 
 async function openTicket(src, runId) {
   const persona = pseudonym(src.customer_email, src);
-  let order = null;
-  if (useStore) {
-    try {
-      order = await placeOrder(persona);
-    } catch (err) {
-      console.warn(`  ! order failed, continuing without one: ${err.message}`);
-    }
-  }
-  const subject = rewriteSubject(src.subject, order?.name ?? null, src.ai_intent);
-  const items = order?.line_items?.map((l) => `${l.quantity}× ${l.title}`).join(", ");
+  const subject = rewriteSubject(src.subject, src.ai_intent);
   const prompt = [
     `You are ${persona.firstName} ${persona.lastName}.`,
     `You've spent about $${Math.round(persona.totalSpent)} over ${persona.totalOrders} orders with the store.`,
@@ -232,24 +210,20 @@ async function openTicket(src, runId) {
     `What the email is about (support's classification): ${intentLabel(src.ai_intent)}.`,
     meaningfulTags(src.tags) ? `Tags support later added: ${meaningfulTags(src.tags)}.` : null,
     src.priority && src.priority !== "normal" ? `It was marked ${src.priority} priority, so you're upset.` : null,
-    order ? `Your order is ${order.name} with: ${items}.` : "Don't mention an order number.",
+    "Don't mention an order number.",
     "Write your first email to support.",
   ].filter(Boolean).join("\n");
 
   const body = dryRun ? `(dry run) ${prompt}` : await llm(PERSONA_SYSTEM, prompt);
   const payload = {
-    customer: order?.customer_id != null ? { ...persona, storeCustomerId: String(order.customer_id) } : persona,
+    customer: persona,
     subject,
     body,
     priority: src.priority ?? "normal",
     tags: src.tags,
     aiIntent: src.ai_intent,
-    orderName: order?.name ?? null,
-    orderId: order?.id != null ? String(order.id) : null,
     sourceTicketId: String(src.id),
     runId,
-    // Returns and exchanges get a simulated return record, like the store's returns app would have
-    ...(order && /return|exchange|refund/i.test(src.ai_intent ?? "") ? { simReturn: simulatedReturn(order, src.ai_intent) } : {}),
   };
   if (dryRun) {
     console.log(JSON.stringify(payload, null, 2));
@@ -260,24 +234,9 @@ async function openTicket(src, runId) {
     body: JSON.stringify(payload),
   });
   console.log(
-    `+ ${detail.ticket.id}  ${persona.firstName} ${persona.lastName}  "${subject}"${order ? `  (order ${order.name})` : ""}  [from #${src.id}]`,
+    `+ ${detail.ticket.id}  ${persona.firstName} ${persona.lastName}  "${subject}"  [from #${src.id}]`,
   );
   return detail;
-}
-
-function simulatedReturn(order, intent) {
-  const exchange = /exchange/i.test(intent ?? "");
-  const statuses = ["requested", "label_sent", "in_transit", "received", exchange ? "exchanged" : "refunded"];
-  const status = statuses[Math.floor(Math.random() * statuses.length)];
-  const items = (order.line_items ?? []).slice(0, 1).map((l) => l.title);
-  const value = (order.line_items ?? []).slice(0, 1).reduce((sum, l) => sum + Number(l.price ?? 0) * (l.quantity ?? 1), 0);
-  return {
-    kind: exchange ? "exchange" : "return",
-    status,
-    items,
-    refundAmount: !exchange && status === "refunded" ? Number(value.toFixed(2)) : null,
-    exchangeFor: exchange ? "Different size (requested by the customer)" : null,
-  };
 }
 
 const FOLLOW_UP_SYSTEM = `You role-play a customer of Buttons Bebe, an online children's clothing store, continuing an email thread with support.
@@ -351,7 +310,7 @@ async function main() {
   const count = Math.max(1, Number(args.count) || 3);
   const runId = randomUUID().slice(0, 8);
   console.log(
-    `Simulator run ${runId} → ${HELPDESK} · model ${MODEL} · store ${useStore ? "on (D1)" : "off"}${dryRun ? " · DRY RUN" : ""}`,
+    `Simulator run ${runId} → ${HELPDESK} · model ${MODEL}${dryRun ? " · DRY RUN" : ""}`,
   );
 
   if (!args.loop) {
