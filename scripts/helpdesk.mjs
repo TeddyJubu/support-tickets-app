@@ -45,7 +45,7 @@ try {
 Object.assign(env, process.env);
 
 const BASE = (env.SIM_HELPDESK_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
-const SITE = "https://helpdesk.teddyonfriday.com";
+const SITE = (env.HELPDESK_PUBLIC_URL || "https://helpdesk.teddyonfriday.com").replace(/\/$/, "");
 
 const argv = process.argv.slice(2);
 const asJson = argv.includes("--json");

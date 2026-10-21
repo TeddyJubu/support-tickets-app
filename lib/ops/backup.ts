@@ -54,7 +54,7 @@ export function setupBackupKeys() {
   if (existsSync(cert)) throw new Error(`A backup certificate already exists: ${cert}`);
   execFileSync(
     "openssl",
-    ["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", key, "-out", cert, "-days", "3650", "-subj", "/CN=buttons-bebe-helpdesk-backup"],
+    ["req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", key, "-out", cert, "-days", "3650", "-subj", "/CN=helpdesk-backup"],
     { stdio: "ignore" },
   );
   chmodSync(key, 0o600);

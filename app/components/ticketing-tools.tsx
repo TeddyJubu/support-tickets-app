@@ -4,6 +4,7 @@ import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
 import { tool, success, type ToolRenderProps } from "@yourgpt/copilot-sdk/core";
 import { useDashboard } from "./context/dashboard-context";
+import { useStore } from "./context/store-context";
 import { apiFetch } from "./api";
 import type { CustomerRisk, Sentiment, CustomerContext } from "./types";
 import type {
@@ -400,6 +401,7 @@ function CallbackToolCard({ status, approval, result, error }: ToolRenderProps) 
 
 export function TicketingTools() {
   const dashboard = useDashboard();
+  const store = useStore();
 
   // useTools registers these once, so handlers read the open ticket when they run
   const requireTicket = () => {
@@ -876,8 +878,7 @@ export function TicketingTools() {
       title: (args) => `Draft ${(args.tone as string) || "professional"} response`,
       executingTitle: "Writing response...",
       completedTitle: "Response drafted",
-      description:
-        "Display a draft email reply to the customer that the agent can edit and send. Write the full subject and body yourself, addressed to the customer by first name and signed 'Cute Things Support'.",
+      description: `Display a draft email reply to the customer that the agent can edit and send. Write the full subject and body yourself, addressed to the customer by first name and signed '${store.senderName}'.`,
       location: "client",
       aiResponseMode: "none",
       aiContext: (result) => {
