@@ -70,7 +70,21 @@ test("ops monitor reports each check; a missing or stale report says so", () => 
   assert.equal(monitor.lastOpsStatus().state, "ok");
   new DatabaseSync(join(scratch, "sim.db")).exec(`UPDATE worker_state SET updated_at = datetime('now', '-10 minutes') WHERE key = 'ops'`);
   assert.equal(monitor.lastOpsStatus().state, "stale");
-  void workerState;
+});
+
+test("a failed scheduled backup stops counting once a later backup succeeds", async () => {
+  // Fails (as before backup-setup); then a backup made by hand afterwards
+  workerState.setState("task:backup", { ok: false, error: "No backup certificate. Run: npm run helpdesk -- backup-setup" });
+  const sim = new DatabaseSync(join(scratch, "sim.db"));
+  sim.exec(`UPDATE worker_state SET updated_at = datetime('now', '-1 minute') WHERE key = 'task:backup'`);
+  assert.equal(monitor.collectOpsStatus().checks.backups.ok, true, "the newest backup is newer than the failure");
+  // A failure after the newest backup still shows
+  sim.exec(`UPDATE worker_state SET updated_at = datetime('now', '+1 minute') WHERE key = 'task:backup'`);
+  const check = monitor.collectOpsStatus().checks.backups;
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /last run failed: No backup certificate/);
+  workerState.setState("task:backup", { ok: true });
+  sim.close();
 });
 
 test("overview returns every part, each on its own", async () => {

@@ -23,7 +23,7 @@ import { getState, setState } from "../worker/state";
 const KEEP = 8;
 export const backupDir = () => join(dataDir(), "backups");
 export const keyDir = () => join(dataDir(), "backup-keys");
-export const recipientCert = () => process.env.BACKUP_RECIPIENT_CERT || join(keyDir(), "recipient.pem");
+export const recipientCert = () => process.env.BACKUP_RECIPIENT_CERT || join(/*turbopackIgnore: true*/ keyDir(), "recipient.pem");
 
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
