@@ -2,7 +2,7 @@
 
 import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
-import { tool, success } from "@yourgpt/copilot-sdk/core";
+import { tool, success, type ToolRenderProps } from "@yourgpt/copilot-sdk/core";
 import { useDashboard } from "./context/dashboard-context";
 import { apiFetch } from "./api";
 import type { CustomerRisk, Sentiment, CustomerContext } from "./types";
@@ -302,6 +302,99 @@ function TicketContext() {
         }
       : { loading: true },
   });
+  return null;
+}
+
+// useTools registers each render once, so cards that need the open ticket read it themselves
+
+function DraftToolCard({ status, result }: ToolRenderProps) {
+  const { setComposeText, sendAgentMessage } = useDashboard();
+  if (isLoading(status)) return <DraftResponseSkeleton />;
+  const data = result?.data as { subject: string; body: string; tone: string } | undefined;
+  if (!data) return null;
+  return (
+    <DraftResponseCard
+      subject={data.subject}
+      body={data.body}
+      tone={data.tone}
+      onUseReply={() => setComposeText(data.body)}
+      onSendEmail={(subject, body) => sendAgentMessage(body, "Email", subject)}
+    />
+  );
+}
+
+function CompensationToolCard({ status, approval, result, args, error }: ToolRenderProps) {
+  const detail = useDashboard().ticketDetail;
+  const options = compensationOptions(detail, String(args.issueSeverity ?? "medium"));
+  const customerValue = formatMoney(detail?.customer?.totalSpent ?? 0);
+  const reasoning =
+    String(args.reasoning ?? "") ||
+    `${customerName(detail)} has spent ${customerValue} over ${detail?.customer?.totalOrders ?? 0} orders.`;
+  if (status === "approval-required" && approval) {
+    return (
+      <CompensationCard
+        mode="select"
+        options={options}
+        reasoning={reasoning}
+        customerValue={customerValue}
+        onSelectOffer={(offer) => approval.onApprove({ selectedOffer: offer })}
+        onCancel={() => approval.onReject("Cancelled by user")}
+      />
+    );
+  }
+  if (isLoading(status)) return <CompensationSkeleton />;
+  if (status === "completed" && result?.data) {
+    const data = result.data as {
+      options: typeof options;
+      reasoning: string;
+      selectedOffer: (typeof options)[number];
+      customerValue: string;
+    };
+    return (
+      <CompensationCard
+        mode="sent"
+        options={data.options}
+        reasoning={data.reasoning || reasoning}
+        customerValue={data.customerValue}
+        selectedOffer={data.selectedOffer}
+      />
+    );
+  }
+  if (status === "error") return <ErrorCard label="Compensation" error={error} />;
+  return null;
+}
+
+function CallbackToolCard({ status, approval, result, error }: ToolRenderProps) {
+  const profile = profileFor(useDashboard().ticketDetail);
+  if (status === "approval-required" && approval) {
+    return (
+      <CallbackScheduledCard
+        mode="select"
+        customerName={profile.name}
+        phone={profile.phone}
+        onSelectSlot={(slot) => approval.onApprove({ selectedSlot: slot })}
+        onCancel={() => approval.onReject("Cancelled by user")}
+      />
+    );
+  }
+  if (isLoading(status)) return <CallbackSkeleton />;
+  if (status === "completed" && result?.data) {
+    const data = result.data as {
+      selectedSlot: { date: string; time: string; displayDate: string };
+      customerName: string;
+      phone: string;
+    };
+    return (
+      <CallbackScheduledCard
+        mode="confirmed"
+        date={data.selectedSlot.displayDate || data.selectedSlot.date}
+        time={data.selectedSlot.time}
+        phone={data.phone}
+        customerName={data.customerName}
+      />
+    );
+  }
+  if (status === "error") return <ErrorCard label="Scheduling" error={error} />;
   return null;
 }
 
@@ -809,22 +902,7 @@ export function TicketingTools() {
           body: String(params.body ?? ""),
           tone: String(params.tone ?? "professional"),
         }),
-      render: (props) => {
-        if (isLoading(props.status)) return <DraftResponseSkeleton />;
-        const data = props.result?.data as
-          | { subject: string; body: string; tone: string }
-          | undefined;
-        if (!data) return null;
-        return (
-          <DraftResponseCard
-            subject={data.subject}
-            body={data.body}
-            tone={data.tone}
-            onUseReply={() => dashboard.setComposeText(data.body)}
-            onSendEmail={(subject, body) => dashboard.sendAgentMessage(body, "Email", subject)}
-          />
-        );
-      },
+      render: (props) => <DraftToolCard {...props} />,
     }),
 
     // ========================================
@@ -955,47 +1033,7 @@ export function TicketingTools() {
           customerValue: formatMoney(detail?.customer?.totalSpent ?? 0),
         });
       },
-      render: (props) => {
-        const { status, approval, result, args } = props;
-        const detail = dashboard.ticketDetail;
-        const options = compensationOptions(detail, String(args.issueSeverity ?? "medium"));
-        const customerValue = formatMoney(detail?.customer?.totalSpent ?? 0);
-        const reasoning =
-          String(args.reasoning ?? "") ||
-          `${customerName(detail)} has spent ${customerValue} over ${detail?.customer?.totalOrders ?? 0} orders.`;
-        if (status === "approval-required" && approval) {
-          return (
-            <CompensationCard
-              mode="select"
-              options={options}
-              reasoning={reasoning}
-              customerValue={customerValue}
-              onSelectOffer={(offer) => approval.onApprove({ selectedOffer: offer })}
-              onCancel={() => approval.onReject("Cancelled by user")}
-            />
-          );
-        }
-        if (isLoading(status)) return <CompensationSkeleton />;
-        if (status === "completed" && result?.data) {
-          const data = result.data as {
-            options: typeof options;
-            reasoning: string;
-            selectedOffer: (typeof options)[number];
-            customerValue: string;
-          };
-          return (
-            <CompensationCard
-              mode="sent"
-              options={data.options}
-              reasoning={data.reasoning || reasoning}
-              customerValue={data.customerValue}
-              selectedOffer={data.selectedOffer}
-            />
-          );
-        }
-        if (status === "error") return <ErrorCard label="Compensation" error={props.error} />;
-        return null;
-      },
+      render: (props) => <CompensationToolCard {...props} />,
     }),
 
     schedule_callback: tool({
@@ -1037,40 +1075,7 @@ export function TicketingTools() {
           phone: profile.phone,
         });
       },
-      render: (props) => {
-        const { status, approval, result } = props;
-        const profile = profileFor(dashboard.ticketDetail);
-        if (status === "approval-required" && approval) {
-          return (
-            <CallbackScheduledCard
-              mode="select"
-              customerName={profile.name}
-              phone={profile.phone}
-              onSelectSlot={(slot) => approval.onApprove({ selectedSlot: slot })}
-              onCancel={() => approval.onReject("Cancelled by user")}
-            />
-          );
-        }
-        if (isLoading(status)) return <CallbackSkeleton />;
-        if (status === "completed" && result?.data) {
-          const data = result.data as {
-            selectedSlot: { date: string; time: string; displayDate: string };
-            customerName: string;
-            phone: string;
-          };
-          return (
-            <CallbackScheduledCard
-              mode="confirmed"
-              date={data.selectedSlot.displayDate || data.selectedSlot.date}
-              time={data.selectedSlot.time}
-              phone={data.phone}
-              customerName={data.customerName}
-            />
-          );
-        }
-        if (status === "error") return <ErrorCard label="Scheduling" error={props.error} />;
-        return null;
-      },
+      render: (props) => <CallbackToolCard {...props} />,
     }),
 
     escalate_ticket: tool({
