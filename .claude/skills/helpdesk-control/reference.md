@@ -10,7 +10,7 @@ browser ──https──▶ Caddy (helpdesk.teddyonfriday.com, Let's Encrypt; s
                            ├─ data/helpdesk.db  historical export (read-only, real PII)
                            ├─ data/kb/ + kb.db  knowledge base articles and search index
                            ├─ Cloudflare Workers AI  copilot chat, KB embeddings
-                           ├─ Shopify Admin API  Cute Things store, read-only (verified senders' own orders)
+                           ├─ Shopify Admin API  the connected store, read-only (verified senders' own orders)
                            └─ AWS SES/S3        inbound email, staff replies, owner alerts
 
 systemd "support-tickets-worker" (scripts/worker.ts)
@@ -28,7 +28,7 @@ scripts/simulate.mjs ──▶ /api/helpdesk/sim/* (bearer key: opens tickets; n
 - **Sending**: `lib/sending.ts`. Read & write grant (30 min, per session) → review (recipient, answered message, exact text) → confirm with an idempotency key. Unconfirmed sends block new replies until staff settle them.
 - **Knowledge base**: `data/kb/{intents,faq,policies,tickets,learned,products}/*.md`, indexed into `data/kb.db` (FTS5 + bge-m3 embeddings, hybrid search). Notice Board notices override articles.
 - **Learning**: delivered replies become lessons; owner approves; nightly promotion writes masked examples to `data/kb/learned/` (`lib/learning.ts`, `lib/pii.ts`).
-- **Store**: the Cute Things Shopify store through the Admin GraphQL API (`lib/shopify.ts`): queries only (mutations are refused before sending), a client-credentials token renewed before it expires (or a fixed `SHOPIFY_ADMIN_TOKEN`), retries on throttling. `lib/store.ts` decides access: only an email ticket whose sender passed DMARC (`sim_tickets.sender_verified = 1`; one failing message clears it for good) and whose address matches the customer key, and only that Shopify customer's own orders (exact email match). Simulated tickets, legacy email tickets (before verification was recorded) and unverified senders get no store data. Reads are cached per ticket for 5 minutes in `store_snapshots`, with the last good read shown as stale when Shopify fails; the drafter and copilot get an error instead of a stale order. The AI's `get_order` gets the order only: no address, email or IDs. The old demo store (`shop-sim` Worker + D1) is no longer used.
+- **Store**: the connected Shopify store through the Admin GraphQL API (`lib/shopify.ts`): queries only (mutations are refused before sending), retries on throttling. Which store: `SHOPIFY_SHOP` in `.env.local` pins one (client-credentials token renewed before it expires, or a fixed `SHOPIFY_ADMIN_TOKEN`); otherwise an owner connects one in Settings (`lib/shopify-connect.ts`): Shopify OAuth with a signed state cookie and HMAC-checked callback, expiring offline tokens saved AES-GCM-encrypted in `shopify_connection` (key `data/shopify-token.key`, not in backups) and refreshed by one process at a time (`lib/shopify-tokens.ts`). A refused refresh marks the store "reconnect", turns lookups off and alerts the owners once. Disconnect calls `appUninstall` (the only write to Shopify) and deletes the keys and cached store data. Shopify's webhooks (`app/uninstalled`, the three privacy topics) are HMAC-checked and deduped in `shopify_webhooks`; a privacy data request raises an owner alert with ticket IDs (answer it within 30 days), a customer redact clears that customer's cached store data. `lib/store.ts` decides access: only an email ticket whose sender passed DMARC (`sim_tickets.sender_verified = 1`; one failing message clears it for good) and whose address matches the customer key, and only that Shopify customer's own orders (exact email match). Simulated tickets, legacy email tickets (before verification was recorded) and unverified senders get no store data. Reads are cached per ticket for 5 minutes in `store_snapshots`, with the last good read shown as stale when Shopify fails; the drafter and copilot get an error instead of a stale order. The AI's `get_order` gets the order only: no address, email or IDs. The old demo store (`shop-sim` Worker + D1) is no longer used.
 
 ## HTTP API (all behind sign-in unless noted)
 
@@ -47,6 +47,8 @@ scripts/simulate.mjs ──▶ /api/helpdesk/sim/* (bearer key: opens tickets; n
 | `GET/POST /api/helpdesk/sim/tickets/{id}/draft` | AI draft state; queue a new draft |
 | `PATCH /api/helpdesk/drafts/{id}` `{state}`, `POST .../rewrite` | use / dismiss / restore a draft; "Edit with AI" |
 | `GET /api/helpdesk/tickets/{id}/store` | customer rail: the verified sender's Shopify customer, orders, returns (cached, `?refresh=1`) |
+| `GET /api/shopify/status` (staff), `POST /api/shopify/connect` `{shop}` → Shopify → `GET /api/shopify/callback`, `POST /api/shopify/disconnect` (owner) | Settings: the store connection |
+| `POST /api/shopify/webhooks` | public, Shopify's HMAC: app uninstalled and privacy webhooks, answers `{ok:true}` only |
 | `GET /api/helpdesk/attachments/{id}` | an email attachment (images inline, others download) |
 | `GET /api/kb/search?q=`, `/api/kb/articles`, `GET/PUT/POST /api/kb/article`, `POST /api/kb/reindex`, `GET /api/kb/status` | knowledge base (edits and re-index: owner) |
 | `GET/POST /api/kb/notices`, `POST /api/kb/notices/{id}/end` | Notice Board (owner posts/ends) |
@@ -69,14 +71,16 @@ Ticket status: a customer message sets `open` (and wakes a snooze), an agent rep
 | `STORE_NAME`, `STORE_DESCRIPTION`, `SUPPORT_EMAIL`, `SENDER_NAME` | this install's store (`lib/settings.ts`): the name in the UI, the copilot/draft/rewrite prompts and alert emails, the support address, and the sign-off and email display name. Defaults are the demo install's (Cute Things); set them for every new store. The copilot's instructions are built on the server (`app/api/chat/route.ts`); the browser only sends the open ticket's context |
 | `SIM_API_KEY` | simulator and CLI bearer key |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |
-| `SHOPIFY_SHOP`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | Shopify store (`cute-things` or `cute-things.myshopify.com`) and the Dev Dashboard app's credentials (scopes `read_customers`, `read_orders`, plus `read_all_orders` for orders older than 60 days; protected customer data: name and email). The app must be installed on the store |
+| `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | the Dev Dashboard app's credentials (scopes `read_customers`, `read_orders`; protected customer data: name and email; redirect, App and webhook URLs as Settings shows them). With these an owner connects a store in Settings |
+| `SHOPIFY_SCOPES` (optional) | extra read scopes, e.g. `read_all_orders` for orders older than 60 days |
+| `SHOPIFY_SHOP` (optional) | pin a store (`cute-things` or `cute-things.myshopify.com`) instead of Settings; the app must be installed on it |
 | `SHOPIFY_ADMIN_TOKEN` (optional) | a fixed Admin API token (`shpat_…`) instead of the client credentials |
 | `SHOPIFY_API_VERSION` (optional) | Admin API version, default `2026-10` |
 | `INBOUND_EMAIL_TOKEN`, `INBOUND_SNS_TOPIC_ARN`, `INBOUND_EMAIL_BUCKET` | inbound email webhook |
 | `HELPDESK_AWS_ACCESS_KEY_ID`, `HELPDESK_AWS_SECRET_ACCESS_KEY`, `HELPDESK_AWS_REGION`, `OUTBOUND_EMAIL_FROM` | SES sending, S3 reads |
 | `ALERT_EMAIL` (optional) | owner alert recipients, comma-separated; without it alerts stay in-app |
 | `AUTO_DRAFTS` (optional) | `0` stops queuing AI drafts (triage still runs) |
-| `HELPDESK_PUBLIC_URL` (optional) | links in alert emails and the site `helpdesk status` checks, default `https://helpdesk.teddyonfriday.com` |
+| `HELPDESK_PUBLIC_URL` (optional) | links in alert emails, the site `helpdesk status` checks and the Shopify redirect/webhook URLs, default `https://helpdesk.teddyonfriday.com` |
 | `BACKUP_RECIPIENT_CERT` (optional) | backup certificate, default `data/backup-keys/recipient.pem` |
 | `HELPDESK_DATA_DIR`, `HELPDESK_KB_DIR` (optional) | data folders (tests use scratch folders) |
 | `BACKUP_S3_URL`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` | off-site copies of the encrypted backups: bucket URL (R2: `https://<account>.r2.cloudflarestorage.com/<bucket>`) and a token for that bucket only. Without them backups stay on this machine and `ops` shows `offsiteBackups` failing |
@@ -94,7 +98,7 @@ The server and worker read `.env.local` at startup: restart both after changing 
 - **Backups**: encrypted, every 6 h by the worker, uploaded to the bucket; see [Backups and restore](#backups-and-restore).
 - **Alerts**: set `ALERT_EMAIL`, send a test from `/alerts`. The heartbeat timer emails when the worker stops and when it recovers.
 - **Tests**: `npm test` (scratch data, fake AI/SES/Shopify, nothing sent); `npm run verify` runs the full release gate.
-- **Shopify connection**: `npm run helpdesk -- status` reads the shop's name (no customer or order data).
+- **Shopify connection**: Settings (`/settings`, owner connects/disconnects); `npm run helpdesk -- status` reads the shop's name (no customer or order data).
 - **Logs**: `npm run helpdesk -- logs 200` or `sudo journalctl -u support-tickets -f`.
 - Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs under systemd as `svvi-caddy.service` (enabled, so it starts at boot; `Restart=on-failure`). The unit was set up for the SVVI viewer and serves this site from the same Caddyfile: don't disable or rename it. Validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo systemctl reload svvi-caddy`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
 - Search-engine blocking: `app/robots.ts`, robots meta in `app/layout.tsx`, `X-Robots-Tag` in `next.config.ts` and Caddy.
@@ -139,7 +143,9 @@ Email that arrived after the backup isn't in the restored database. SES also wri
 | "An earlier reply hasn't been confirmed" | the email service didn't confirm a send: check the support mailbox's Sent folder, then "It went out" / "It didn't go out" |
 | Review refused: "customer wrote again" | read the new message, then review again |
 | KB search returns nothing / "keyword only" | `npm run kb -- status`; re-index; Workers AI keys for embeddings |
-| Customer rail: "isn't connected" | `grep -c '^SHOPIFY_' .env.local`; restart after adding them; `npm run helpdesk -- status` shows the sign-in error (`shop_not_permitted`: the app isn't installed on the store or is in another organization) |
+| Customer rail: "needs reconnecting" | Shopify refused the saved keys (app uninstalled, or keys revoked): an owner clicks Reconnect in Settings |
+| Settings: "Connecting the store didn't work" | the reason is shown; usually the app's redirect URL doesn't match Settings' "Allowed redirection URL" (check `HELPDESK_PUBLIC_URL`), a scope wasn't granted, or the attempt took over 10 minutes |
+| Customer rail: "isn't connected" | connect a store in Settings, or (pinned) `grep -c '^SHOPIFY_' .env.local`; restart after adding them; `npm run helpdesk -- status` shows the sign-in error (`shop_not_permitted`: the app isn't installed on the store or is in another organization) |
 | Customer rail: "couldn't be verified" / "before senders were verified" / "doesn't match their record" | expected: store data needs a DMARC-passing sender whose address matches the ticket; staff can open a new ticket for the customer (`POST /api/helpdesk/tickets`), which counts as verified |
 | Customer rail: "No customer in the Shopify store has this email address" | the sender's address isn't on a Shopify customer exactly (Shopify matches the customer's email, not order emails) |
 | Customer rail: "couldn't be reached: … Access denied" | the app lacks a scope or protected customer data access: `status` lists missing scopes; update the app in the Dev Dashboard and reinstall it |

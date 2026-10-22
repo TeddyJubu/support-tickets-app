@@ -381,4 +381,38 @@ export const SIM_MIGRATIONS: Migration[] = [
         ALTER TABLE sim_tickets ADD COLUMN sender_verified INTEGER;
       `),
   },
+  {
+    version: 11,
+    name: "shopify store connected from settings",
+    up: (db) =>
+      db.exec(`
+        -- At most one store. Tokens are encrypted (lib/shopify-tokens.ts); times in ms since epoch
+        CREATE TABLE shopify_connection (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          -- the myshopify subdomain (cute-things), and the store's own name
+          shop TEXT NOT NULL,
+          shop_name TEXT,
+          scopes TEXT,
+          -- connected | reconnect (Shopify refused the keys, or they can't be read here)
+          status TEXT NOT NULL,
+          access_token TEXT,
+          access_expires_at INTEGER,
+          refresh_token TEXT,
+          refresh_expires_at INTEGER,
+          -- a process is refreshing the token until this time
+          refreshing_until INTEGER,
+          last_error TEXT,
+          connected_by TEXT,
+          connected_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+        -- Shopify webhook deliveries already handled (Shopify may deliver one more than once)
+        CREATE TABLE shopify_webhooks (
+          id TEXT PRIMARY KEY,
+          topic TEXT NOT NULL,
+          shop TEXT,
+          received_at TEXT DEFAULT (datetime('now'))
+        );
+      `),
+  },
 ];

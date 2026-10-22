@@ -24,7 +24,7 @@ function routes(dir = apiDir) {
   }
   return out;
 }
-const PUBLIC = new Set(["/api/auth/login", "/api/health", "/api/ready", "/api/helpdesk/inbound/ses"]);
+const PUBLIC = new Set(["/api/auth/login", "/api/health", "/api/ready", "/api/helpdesk/inbound/ses", "/api/shopify/webhooks"]);
 
 const run = (path, { method = "GET", headers = {} } = {}) =>
   proxy(new NextRequest(new URL(path, "http://helpdesk.test"), { method, headers: { host: "helpdesk.test", ...headers } }));

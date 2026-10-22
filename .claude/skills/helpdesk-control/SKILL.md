@@ -5,7 +5,7 @@ description: Operate the Buttons Bebe helpdesk test system in this project — c
 
 # Helpdesk control
 
-The system: a Next.js support helpdesk live at https://helpdesk.teddyonfriday.com (staff sign-in), a background worker that drafts AI replies for review, a customer simulator, and read-only order lookups in the Cute Things Shopify store (`lib/shopify.ts`). Everything below runs from the project root, `/home/ubuntu/support-tickets-app`.
+The system: a Next.js support helpdesk live at https://helpdesk.teddyonfriday.com (staff sign-in), a background worker that drafts AI replies for review, a customer simulator, and read-only order lookups in the connected Shopify store (`lib/shopify.ts`; owners connect or disconnect a store in Settings). Everything below runs from the project root, `/home/ubuntu/support-tickets-app`.
 
 ## Control CLI
 
@@ -48,7 +48,7 @@ A typical test cycle: `simulate --count N` → the worker drafts replies → han
 ## Rules
 
 - **Never print or log secrets** from `.env.local` (Cloudflare tokens, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_ADMIN_TOKEN`, `SIM_API_KEY`). Check that a key exists with `grep -c '^NAME=' .env.local`, never `cat` the file.
-- **The Shopify store holds real customer data and is read-only here.** Never write to it (the client refuses mutations), and never export or display its customers or orders outside a ticket's own rail. The old demo store (`shop-sim` Worker + D1) is no longer used: don't touch it.
+- **The Shopify store holds real customer data and is read-only here.** Never write to it (the client refuses mutations; the only write is an owner's Disconnect in Settings, which uninstalls the helpdesk's app), and never export or display its customers or orders outside a ticket's own rail. The old demo store (`shop-sim` Worker + D1) is no longer used: don't touch it.
 - **The helpdesk is on the public internet behind staff sign-in** (`proxy.ts`; search engines blocked). Never add a public endpoint that returns store, customer or ticket data. Store reads are limited to a verified email sender's own customer record and orders (`lib/store.ts`). Staff choose their own passwords: never set one for someone (`user add` / `user password` ask the person at the terminal).
 - **Only people send.** The AI drafts; staff replies go out through Review and Confirm & send (`lib/sending.ts`). The CLI `reply` only works on simulated tickets, never on real email tickets.
 - Historical tickets are read-only; `reply`/`close` only work on `SIM-…` tickets.
