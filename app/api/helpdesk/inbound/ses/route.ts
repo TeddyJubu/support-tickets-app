@@ -89,6 +89,8 @@ export async function POST(request: Request) {
     attachments,
     channel: "email",
     tags: "email",
+    // Only a DMARC pass proves the From address, which store lookups are keyed on
+    senderVerified: receipt.dmarcVerdict?.status === "PASS",
     sourceTicketId: mail.messageId ?? null,
     messageId: mail.messageId ?? `ses:${msg.mail?.messageId}`,
     refs: [...msgIds(mail.inReplyTo), ...msgIds(mail.references)],

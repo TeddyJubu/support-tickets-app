@@ -62,12 +62,12 @@ process.env.HELPDESK_DATA_DIR = scratch;
 process.env.HELPDESK_KB_DIR = join(scratch, "kb");
 if (live) {
   loadEnv(root);
-  for (const k of Object.keys(process.env)) if (/AWS|OUTBOUND_EMAIL|INBOUND_|ALERT_|SHOP_/.test(k)) delete process.env[k];
+  for (const k of Object.keys(process.env)) if (/AWS|OUTBOUND_EMAIL|INBOUND_|ALERT_|SHOP_|SHOPIFY/.test(k)) delete process.env[k];
   const data = join(root, "data");
   if (existsSync(join(data, "kb"))) cpSync(join(data, "kb"), join(scratch, "kb"), { recursive: true });
   if (existsSync(join(data, "kb.db"))) cpSync(join(data, "kb.db"), join(scratch, "kb.db"));
 } else {
-  for (const k of Object.keys(process.env)) if (/CLOUDFLARE|AWS|SHOP_/.test(k)) delete process.env[k];
+  for (const k of Object.keys(process.env)) if (/CLOUDFLARE|AWS|SHOP_|SHOPIFY/.test(k)) delete process.env[k];
 }
 
 const { classify } = await import("@/lib/classifier/index");

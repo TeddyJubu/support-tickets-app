@@ -10,7 +10,7 @@ browser ──https──▶ Caddy (helpdesk.teddyonfriday.com, Let's Encrypt; s
                            ├─ data/helpdesk.db  historical export (read-only, real PII)
                            ├─ data/kb/ + kb.db  knowledge base articles and search index
                            ├─ Cloudflare Workers AI  copilot chat, KB embeddings
-                           ├─ Cloudflare D1 "shop-sim"  demo store (simulated customers/orders only)
+                           ├─ Shopify Admin API  Cute Things store, read-only (verified senders' own orders)
                            └─ AWS SES/S3        inbound email, staff replies, owner alerts
 
 systemd "support-tickets-worker" (scripts/worker.ts)
@@ -18,7 +18,7 @@ systemd "support-tickets-worker" (scripts/worker.ts)
    every minute: owner alerts, ops monitor; 6 h: encrypted backups → data/backups/ → bucket (BACKUP_S3_URL); daily: product sync, learning, pruning
 systemd timer "support-tickets-heartbeat" (scripts/heartbeat-check.ts): emails if the worker stops
 
-scripts/simulate.mjs ──▶ D1 (#S orders) ──▶ /api/helpdesk/sim/* (bearer key: opens tickets)
+scripts/simulate.mjs ──▶ /api/helpdesk/sim/* (bearer key: opens tickets; no store data)
 ```
 
 - **App**: Next.js 16, TypeScript, `node:sqlite` (Node 22+). `lib/db.ts` opens each database once per process and applies `lib/sim-migrations.ts` on open.
@@ -28,7 +28,7 @@ scripts/simulate.mjs ──▶ D1 (#S orders) ──▶ /api/helpdesk/sim/* (bea
 - **Sending**: `lib/sending.ts`. Read & write grant (30 min, per session) → review (recipient, answered message, exact text) → confirm with an idempotency key. Unconfirmed sends block new replies until staff settle them.
 - **Knowledge base**: `data/kb/{intents,faq,policies,tickets,learned,products}/*.md`, indexed into `data/kb.db` (FTS5 + bge-m3 embeddings, hybrid search). Notice Board notices override articles.
 - **Learning**: delivered replies become lessons; owner approves; nightly promotion writes masked examples to `data/kb/learned/` (`lib/learning.ts`, `lib/pii.ts`).
-- **Demo store**: Cloudflare Worker `shop-sim` (private) on D1 `shop-sim` (`433ed25d-4b4d-40db-beb0-ad2df6ce690c`), read and written through the D1 HTTP API (`lib/store-d1.mjs`); the Worker is never called. Simulated orders are `#S<n>` with numbers `9000000000000 + n`.
+- **Store**: the Cute Things Shopify store through the Admin GraphQL API (`lib/shopify.ts`): queries only (mutations are refused before sending), a client-credentials token renewed before it expires (or a fixed `SHOPIFY_ADMIN_TOKEN`), retries on throttling. `lib/store.ts` decides access: only an email ticket whose sender passed DMARC (`sim_tickets.sender_verified = 1`; one failing message clears it for good) and whose address matches the customer key, and only that Shopify customer's own orders (exact email match). Simulated tickets, legacy email tickets (before verification was recorded) and unverified senders get no store data. Reads are cached per ticket for 5 minutes in `store_snapshots`, with the last good read shown as stale when Shopify fails; the drafter and copilot get an error instead of a stale order. The AI's `get_order` gets the order only: no address, email or IDs. The old demo store (`shop-sim` Worker + D1) is no longer used.
 
 ## HTTP API (all behind sign-in unless noted)
 
@@ -46,7 +46,7 @@ scripts/simulate.mjs ──▶ D1 (#S orders) ──▶ /api/helpdesk/sim/* (bea
 | `GET .../send`, `POST .../send/resolve` `{key, outcome}` | unconfirmed send status; settle it (`sent` / `not_sent`) |
 | `GET/POST /api/helpdesk/sim/tickets/{id}/draft` | AI draft state; queue a new draft |
 | `PATCH /api/helpdesk/drafts/{id}` `{state}`, `POST .../rewrite` | use / dismiss / restore a draft; "Edit with AI" |
-| `GET /api/helpdesk/tickets/{id}/store` | customer rail: simulated store customer, orders, returns (cached, `?refresh=1`) |
+| `GET /api/helpdesk/tickets/{id}/store` | customer rail: the verified sender's Shopify customer, orders, returns (cached, `?refresh=1`) |
 | `GET /api/helpdesk/attachments/{id}` | an email attachment (images inline, others download) |
 | `GET /api/kb/search?q=`, `/api/kb/articles`, `GET/PUT/POST /api/kb/article`, `POST /api/kb/reindex`, `GET /api/kb/status` | knowledge base (edits and re-index: owner) |
 | `GET/POST /api/kb/notices`, `POST /api/kb/notices/{id}/end` | Notice Board (owner posts/ends) |
@@ -69,7 +69,9 @@ Ticket status: a customer message sets `open` (and wakes a snooze), an agent rep
 | `STORE_NAME`, `STORE_DESCRIPTION`, `SUPPORT_EMAIL`, `SENDER_NAME` | this install's store (`lib/settings.ts`): the name in the UI, the copilot/draft/rewrite prompts and alert emails, the support address, and the sign-off and email display name. Defaults are the demo install's (Cute Things); set them for every new store. The copilot's instructions are built on the server (`app/api/chat/route.ts`); the browser only sends the open ticket's context |
 | `SIM_API_KEY` | simulator and CLI bearer key |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |
-| `SHOP_SIM_ACCOUNT_ID`, `SHOP_D1_DATABASE_ID`, `SHOP_D1_TOKEN` | demo store D1 access (token "helpdesk shop-sim deploy", has D1: Edit) |
+| `SHOPIFY_SHOP`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | Shopify store (`cute-things` or `cute-things.myshopify.com`) and the Dev Dashboard app's credentials (scopes `read_customers`, `read_orders`, plus `read_all_orders` for orders older than 60 days; protected customer data: name and email). The app must be installed on the store |
+| `SHOPIFY_ADMIN_TOKEN` (optional) | a fixed Admin API token (`shpat_…`) instead of the client credentials |
+| `SHOPIFY_API_VERSION` (optional) | Admin API version, default `2026-10` |
 | `INBOUND_EMAIL_TOKEN`, `INBOUND_SNS_TOPIC_ARN`, `INBOUND_EMAIL_BUCKET` | inbound email webhook |
 | `HELPDESK_AWS_ACCESS_KEY_ID`, `HELPDESK_AWS_SECRET_ACCESS_KEY`, `HELPDESK_AWS_REGION`, `OUTBOUND_EMAIL_FROM` | SES sending, S3 reads |
 | `ALERT_EMAIL` (optional) | owner alert recipients, comma-separated; without it alerts stay in-app |
@@ -91,8 +93,8 @@ The server and worker read `.env.local` at startup: restart both after changing 
 - **Ops monitor**: `npm run helpdesk -- ops`; the worker writes `data/ops-status.json` every minute (shown on `/overview`).
 - **Backups**: encrypted, every 6 h by the worker, uploaded to the bucket; see [Backups and restore](#backups-and-restore).
 - **Alerts**: set `ALERT_EMAIL`, send a test from `/alerts`. The heartbeat timer emails when the worker stops and when it recovers.
-- **Tests**: `npm test` (scratch data, fake AI/SES/store, nothing sent); `npm run verify` runs the full release gate.
-- **Simulated store rows**: `SELECT * FROM orders WHERE name LIKE '#S%'` on D1 `shop-sim` (read-only).
+- **Tests**: `npm test` (scratch data, fake AI/SES/Shopify, nothing sent); `npm run verify` runs the full release gate.
+- **Shopify connection**: `npm run helpdesk -- status` reads the shop's name (no customer or order data).
 - **Logs**: `npm run helpdesk -- logs 200` or `sudo journalctl -u support-tickets -f`.
 - Caddy config: `/etc/caddy/Caddyfile` (backups `Caddyfile.bak-*`). Caddy runs under systemd as `svvi-caddy.service` (enabled, so it starts at boot; `Restart=on-failure`). The unit was set up for the SVVI viewer and serves this site from the same Caddyfile: don't disable or rename it. Validate with `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, apply with `sudo systemctl reload svvi-caddy`. Another site (`52.41.224.67.sslip.io` → :3002) shares it: don't touch that block.
 - Search-engine blocking: `app/robots.ts`, robots meta in `app/layout.tsx`, `X-Robots-Tag` in `next.config.ts` and Caddy.
@@ -137,12 +139,14 @@ Email that arrived after the backup isn't in the restored database. SES also wri
 | "An earlier reply hasn't been confirmed" | the email service didn't confirm a send: check the support mailbox's Sent folder, then "It went out" / "It didn't go out" |
 | Review refused: "customer wrote again" | read the new message, then review again |
 | KB search returns nothing / "keyword only" | `npm run kb -- status`; re-index; Workers AI keys for embeddings |
-| Customer rail: "isn't connected" / "simulated customers only" | `SHOP_D1_*` keys; real email customers never get store lookups |
+| Customer rail: "isn't connected" | `grep -c '^SHOPIFY_' .env.local`; restart after adding them; `npm run helpdesk -- status` shows the sign-in error (`shop_not_permitted`: the app isn't installed on the store or is in another organization) |
+| Customer rail: "couldn't be verified" / "before senders were verified" / "doesn't match their record" | expected: store data needs a DMARC-passing sender whose address matches the ticket; staff can open a new ticket for the customer (`POST /api/helpdesk/tickets`), which counts as verified |
+| Customer rail: "No customer in the Shopify store has this email address" | the sender's address isn't on a Shopify customer exactly (Shopify matches the customer's email, not order emails) |
+| Customer rail: "couldn't be reached: … Access denied" | the app lacks a scope or protected customer data access: `status` lists missing scopes; update the app in the Dev Dashboard and reinstall it |
 | Alerts "Not emailed" | `ALERT_EMAIL` missing; set it, restart the worker, Retry on `/alerts` |
 | Backups failing | `npm run helpdesk -- ops`; "No backup certificate" → `backup-setup` (the user then moves the private key off the server) |
 | `status` says service inactive | `npm run helpdesk -- logs 100`, then `sudo systemctl restart support-tickets` |
-| simulator: `Store database: … not authorized` | the D1 token lost access; it needs Account → D1 → Edit |
-| simulator: `Workers AI` errors / slow | model quota or outage; try `--no-orders --count 1`, or set `CF_MODEL` |
+| simulator: `Workers AI` errors / slow | model quota or outage; try `--count 1`, or set `CF_MODEL` |
 | everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |
 | UI doesn't show new SIM tickets | the Simulated tab polls every 10 s; confirm with `npm run helpdesk -- tickets` |
 | `offsiteBackups` failing: "local only" or "upload failed" | `grep -c '^BACKUP_S3_' .env.local` should be 3 or more (restart the worker after adding them); `npm run helpdesk -- backup` shows the upload error (a 403 means the token isn't scoped to this bucket with Object Read & Write) |

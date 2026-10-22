@@ -14,6 +14,7 @@ import type {
   TicketDetail,
   TicketSummary,
 } from "@/lib/helpdesk-types";
+import type { RailOrder } from "@/lib/store";
 import {
   customerLocation,
   customerTier,
@@ -57,35 +58,22 @@ interface KbOutcome {
   notices: Array<{ title: string; body: string }>;
 }
 
-// Order as returned by the demo store (Shopify Admin REST shape)
-interface StoreOrder {
-  id: number;
-  name: string;
-  total_price: string;
-  financial_status: string | null;
-  fulfillment_status: string | null;
-  cancelled_at: string | null;
-  created_at: string;
-  line_items: Array<{ title: string; quantity: number; price: string; sku: string | null }>;
-  fulfillments: Array<{ status: string; tracking_number: string | null; tracking_company: string | null }>;
-  refunds: Array<{ transactions: Array<{ amount: string }> }>;
-}
+// Order from the Shopify store, in the customer rail's shape (lib/store.ts)
+type StoreOrder = RailOrder;
 
 function orderSummary(o: StoreOrder) {
-  const items = o.line_items.map((l) => `${l.quantity}× ${l.title}`).join(", ");
-  const shipment = o.fulfillments[0];
-  const refunded = o.refunds
-    .flatMap((r) => r.transactions)
-    .reduce((sum, t) => sum + Number(t.amount), 0);
+  const items = o.items.map((l) => `${l.quantity}× ${l.title}`).join(", ");
+  const shipment = o.shipments[0];
   return {
     items,
-    status: o.cancelled_at
+    status: o.cancelledAt
       ? "cancelled"
-      : [o.financial_status, o.fulfillment_status ?? "unfulfilled"].filter(Boolean).join(" · "),
+      : [o.payment, o.fulfillment ?? "unfulfilled"].filter(Boolean).join(" · "),
     shipping: shipment
-      ? `${shipment.tracking_company ?? "Carrier"} ${shipment.tracking_number ?? ""} (${shipment.status})`.trim()
+      ? `${shipment.carrier ?? "Carrier"} ${shipment.tracking ?? ""} (${shipment.shipmentStatus ?? shipment.status ?? "shipped"})`.replace(/ +/g, " ")
       : "Not shipped yet",
-    refunded,
+    // null: a refund amount Shopify didn't return ("unavailable")
+    refunded: o.refunded,
   };
 }
 
@@ -711,30 +699,38 @@ export function TicketingTools() {
       executingTitle: "Looking up the order...",
       completedTitle: (args) => `Order ${args.orderName ?? ""}`.trim(),
       description:
-        "Look up the order a simulated ticket is about in the demo store: items, total, payment/fulfillment status, tracking and refunds. Only works for orders attached to simulated tickets.",
+        "Look up one of the open ticket's customer's orders in the Shopify store: items, total, payment/fulfillment status, tracking and refunds. With no order name it finds the order the ticket is about. Only works for email tickets from a verified sender; simulated tickets have no orders.",
       location: "client",
       aiResponseMode: "brief",
       aiContext: (result) => {
         const o = (result.data as { order: StoreOrder } | undefined)?.order;
         if (!o) return "[Order not found]";
         const sum = orderSummary(o);
-        return `[UI Card Displayed: order ${o.name}, $${o.total_price}, ${sum.status}; items: ${sum.items}; shipping: ${sum.shipping}${sum.refunded ? `; refunded $${sum.refunded.toFixed(2)}` : ""}. Answer briefly using this.]`;
+        const money = (v: number | null) => (v == null ? "unavailable" : `$${v.toFixed(2)}`);
+        return `[UI Card Displayed: order ${o.name}, ${money(o.total)}, ${sum.status}; items: ${sum.items}; shipping: ${sum.shipping}${sum.refunded !== 0 ? `; refunded ${money(sum.refunded)}` : ""}. Answer briefly using this.]`;
       },
       inputSchema: {
         type: "object",
         properties: {
           orderName: {
             type: "string",
-            description: "Order name like #S1001 (defaults to the open ticket's order)",
+            description: "Order name like #1001 (defaults to the order the open ticket is about)",
           },
         },
       },
       handler: async (params) => {
-        const name = String(params.orderName || requireTicket().ticket.orderName || "");
-        if (!name) throw new Error("This ticket isn't linked to a store order");
-        return success(
-          await getJson<{ order: StoreOrder }>(`/api/helpdesk/orders?name=${encodeURIComponent(name)}`),
+        const ticket = requireTicket().ticket;
+        const name = String(params.orderName ?? "").trim();
+        const res = await apiFetch(
+          `/api/helpdesk/orders?ticket=${encodeURIComponent(ticket.id)}${name ? `&name=${encodeURIComponent(name)}` : ""}`,
         );
+        const out = (await res.json().catch(() => ({}))) as { order?: StoreOrder; error?: string; recent?: Array<{ name: string }> };
+        if (!res.ok || !out.order) {
+          // The server's reason (a simulated ticket, an unverified sender, not this customer's order…)
+          const recent = out.recent?.length ? ` Recent orders: ${out.recent.map((r) => r.name).join(", ")}.` : "";
+          throw new Error(`${out.error ?? `Request failed (${res.status})`}${recent}`);
+        }
+        return success({ order: out.order });
       },
       render: (props) => {
         if (isLoading(props.status)) return <CardSkeleton />;
@@ -747,12 +743,13 @@ export function TicketingTools() {
             order={{
               id: o.name,
               product: sum.items,
-              price: Number(o.total_price),
+              price: o.total,
               status: sum.status,
-              date: formatDate(o.created_at.replace("T", " ").slice(0, 19)),
-              shippingAddress: sum.refunded
-                ? `${sum.shipping} · refunded ${formatMoney(sum.refunded)}`
-                : sum.shipping,
+              date: o.placedAt ? formatDate(o.placedAt.replace("T", " ").slice(0, 19)) : "unavailable",
+              shippingAddress:
+                sum.refunded === 0
+                  ? sum.shipping
+                  : `${sum.shipping} · refunded ${sum.refunded == null ? "unavailable" : formatMoney(sum.refunded)}`,
             }}
           />
         );

@@ -1,0 +1,276 @@
+// Read-only client for the Cute Things store's Shopify Admin GraphQL API. Only queries go out:
+// anything that looks like a mutation is refused before it's sent. Callers are always scoped
+// to one customer (lib/store.ts decides who may be looked up). Runs only on the server.
+//
+// Needs: SHOPIFY_SHOP (the myshopify subdomain, e.g. cute-things) and either
+//   SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET  an app in the same Dev Dashboard org as the store;
+//                                              24-hour tokens come from the client credentials grant
+//   SHOPIFY_ADMIN_TOKEN                        a fixed Admin API token, used as is
+// Optional: SHOPIFY_API_VERSION (default 2026-10).
+// Scopes: read_customers, read_orders (read_all_orders for orders older than 60 days), and
+// protected customer data access for names and email addresses.
+
+import type { RailOrder } from "./store";
+
+export const DEFAULT_API_VERSION = "2026-10";
+const TIMEOUT_MS = 10_000;
+const MAX_ATTEMPTS = 3;
+
+export interface ShopifyConfig {
+  shop: string;
+  apiVersion: string;
+  clientId: string | null;
+  clientSecret: string | null;
+  adminToken: string | null;
+}
+
+export function shopifyConfig(env: Record<string, string | undefined> = process.env): ShopifyConfig | null {
+  const shop = (env.SHOPIFY_SHOP ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\.myshopify\.com\/?$/, "");
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(shop)) return null;
+  const adminToken = env.SHOPIFY_ADMIN_TOKEN?.trim() || null;
+  const clientId = env.SHOPIFY_CLIENT_ID?.trim() || null;
+  const clientSecret = env.SHOPIFY_CLIENT_SECRET?.trim() || null;
+  if (!adminToken && !(clientId && clientSecret)) return null;
+  const version = env.SHOPIFY_API_VERSION?.trim() ?? "";
+  return { shop, apiVersion: /^\d{4}-\d{2}$/.test(version) ? version : DEFAULT_API_VERSION, clientId, clientSecret, adminToken };
+}
+
+// Client credentials tokens last 24 hours; one is kept in memory and replaced 5 minutes early
+let token: { key: string; value: string; expiresAt: number } | null = null;
+
+async function accessToken(config: ShopifyConfig, renew = false): Promise<string> {
+  if (config.adminToken) return config.adminToken;
+  const key = `${config.shop}:${config.clientId}`;
+  if (!renew && token?.key === key && token.expiresAt - Date.now() > 5 * 60_000) return token.value;
+  const res = await fetch(`https://${config.shop}.myshopify.com/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: "client_credentials" }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+    cache: "no-store",
+  });
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok || typeof body?.access_token !== "string") {
+    // Shopify's own error code only (e.g. shop_not_permitted), never the request
+    const why = typeof body?.error === "string" ? body.error : `HTTP ${res.status}`;
+    throw new Error(`Shopify sign-in failed: ${why.slice(0, 120)}`);
+  }
+  token = { key, value: body.access_token, expiresAt: Date.now() + Number(body.expires_in ?? 3600) * 1000 };
+  return token.value;
+}
+
+/** Forget the cached token (tests) */
+export function resetShopifyToken() {
+  token = null;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface GraphQLBody {
+  data?: unknown;
+  /** A list for GraphQL errors; a plain string for some HTTP errors (401, 429) */
+  errors?: Array<{ message?: string; extensions?: { code?: string } }> | string;
+  extensions?: { cost?: { requestedQueryCost?: number; throttleStatus?: { currentlyAvailable?: number; restoreRate?: number } } };
+}
+
+/** How long to wait before retrying a throttled request (capped: a person is waiting) */
+function retryDelay(res: Response, body: GraphQLBody | null, attempt: number) {
+  const after = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(after) && res.headers.has("retry-after")) return Math.min(2000, Math.max(0, after * 1000));
+  const cost = body?.extensions?.cost;
+  const status = cost?.throttleStatus;
+  if (status?.restoreRate) {
+    const missing = (cost?.requestedQueryCost ?? 0) - (status.currentlyAvailable ?? 0);
+    return Math.min(2000, Math.max(0, Math.ceil((missing / status.restoreRate) * 1000)));
+  }
+  return Math.min(2000, 250 * 2 ** attempt);
+}
+
+/** Run one read query. Throws on HTTP, GraphQL (even in a 200) and sign-in errors. */
+export async function shopifyQuery<T>(config: ShopifyConfig, query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  if (/\b(mutation|subscription)\b/i.test(query)) throw new Error("Only read queries can be sent to Shopify");
+  let renew = false;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`https://${config.shop}.myshopify.com/admin/api/${config.apiVersion}/graphql.json`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "x-shopify-access-token": await accessToken(config, renew),
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      cache: "no-store",
+    });
+    const body = (await res.json().catch(() => null)) as GraphQLBody | null;
+    const last = attempt + 1 >= MAX_ATTEMPTS;
+    // An expired or revoked token: get a new one once
+    if (res.status === 401 && !config.adminToken && !renew) {
+      renew = true;
+      continue;
+    }
+    renew = false;
+    const errors = Array.isArray(body?.errors) ? body.errors : [];
+    const throttled = res.status === 429 || errors.some((e) => e.extensions?.code === "THROTTLED");
+    if ((throttled || res.status >= 500) && !last) {
+      await sleep(retryDelay(res, body, attempt));
+      continue;
+    }
+    if (!res.ok) throw new Error(`Shopify: HTTP ${res.status}${throttled ? " (rate limited)" : ""}`);
+    if (errors.length) throw new Error(`Shopify: ${String(errors[0].message ?? "query failed").slice(0, 200)}`);
+    if (!body?.data) throw new Error("Shopify: empty response");
+    return body.data as T;
+  }
+}
+
+// Kept small enough that ten orders stay well under Shopify's 1,000-point query cost limit
+const ORDER_FIELDS = `
+  name
+  createdAt
+  cancelledAt
+  displayFinancialStatus
+  displayFulfillmentStatus
+  currencyCode
+  totalPriceSet { shopMoney { amount currencyCode } }
+  customer { id }
+  lineItems(first: 20) { nodes { title quantity sku originalUnitPriceSet { shopMoney { amount } } } }
+  fulfillments(first: 5) { status displayStatus createdAt trackingInfo(first: 2) { company number } }
+  refunds(first: 5) { createdAt note totalRefundedSet { shopMoney { amount } } }
+`;
+
+const CUSTOMER_ID_BY_EMAIL = `query CustomerByEmail($query: String!) {
+  customers(first: 5, query: $query) { nodes { id defaultEmailAddress { emailAddress } } }
+}`;
+
+const CUSTOMER_WITH_ORDERS = `query CustomerWithOrders($id: ID!) {
+  customer(id: $id) {
+    id
+    firstName
+    lastName
+    defaultEmailAddress { emailAddress }
+    defaultAddress { city provinceCode countryCodeV2 }
+    numberOfOrders
+    amountSpent { amount currencyCode }
+    createdAt
+    orders(first: 10, sortKey: CREATED_AT, reverse: true) { nodes { ${ORDER_FIELDS} } }
+  }
+}`;
+
+const ORDERS_BY_NAME = `query OrdersByName($query: String!) {
+  orders(first: 5, query: $query) { nodes { ${ORDER_FIELDS} } }
+}`;
+
+type Money = { amount?: string | null; currencyCode?: string | null } | null | undefined;
+type OrderNode = {
+  name: string;
+  createdAt?: string | null;
+  cancelledAt?: string | null;
+  displayFinancialStatus?: string | null;
+  displayFulfillmentStatus?: string | null;
+  currencyCode?: string | null;
+  totalPriceSet?: { shopMoney?: Money } | null;
+  customer?: { id?: string | null } | null;
+  lineItems?: { nodes?: Array<{ title?: string | null; quantity?: number | null; sku?: string | null; originalUnitPriceSet?: { shopMoney?: Money } | null }> };
+  fulfillments?: Array<{ status?: string | null; displayStatus?: string | null; createdAt?: string | null; trackingInfo?: Array<{ company?: string | null; number?: string | null }> }>;
+  refunds?: Array<{ createdAt?: string | null; note?: string | null; totalRefundedSet?: { shopMoney?: Money } | null }>;
+};
+type CustomerNode = {
+  id: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  defaultEmailAddress?: { emailAddress?: string | null } | null;
+  defaultAddress?: { city?: string | null; provinceCode?: string | null; countryCodeV2?: string | null } | null;
+  numberOfOrders?: string | number | null;
+  amountSpent?: Money;
+  createdAt?: string | null;
+  orders?: { nodes?: OrderNode[] };
+};
+
+const n = (v: unknown) => (v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v));
+const s = (v: unknown) => (v == null || v === "" ? null : String(v));
+/** PARTIALLY_REFUNDED → "partially refunded", the wording the panel shows */
+const label = (v: unknown) => (v == null || v === "" ? null : String(v).toLowerCase().replace(/_/g, " "));
+
+export function toRailOrder(o: OrderNode): RailOrder {
+  const refunds = (o.refunds ?? []).map((r) => ({ amount: n(r.totalRefundedSet?.shopMoney?.amount), note: s(r.note), at: s(r.createdAt) }));
+  return {
+    name: String(o.name),
+    placedAt: s(o.createdAt),
+    total: n(o.totalPriceSet?.shopMoney?.amount),
+    currency: s(o.totalPriceSet?.shopMoney?.currencyCode ?? o.currencyCode),
+    payment: label(o.displayFinancialStatus),
+    fulfillment: label(o.displayFulfillmentStatus),
+    cancelledAt: s(o.cancelledAt),
+    items: (o.lineItems?.nodes ?? []).map((l) => ({
+      title: String(l.title ?? ""),
+      quantity: Number(l.quantity ?? 1),
+      price: n(l.originalUnitPriceSet?.shopMoney?.amount),
+      sku: s(l.sku),
+    })),
+    shipments: (o.fulfillments ?? []).map((f) => ({
+      status: label(f.status),
+      carrier: s(f.trackingInfo?.[0]?.company),
+      tracking: s(f.trackingInfo?.[0]?.number),
+      shipmentStatus: label(f.displayStatus),
+    })),
+    refunds,
+    // One refund with an unknown amount makes the total unknown ("unavailable"), never $0
+    refunded: refunds.some((r) => r.amount === null) ? null : refunds.reduce((sum, r) => sum + (r.amount ?? 0), 0),
+  };
+}
+
+// Search values are quoted; anything that could break out of the quotes is refused instead
+const searchable = (v: string) => /^[^\s"\\]{1,254}$/.test(v);
+const sameName = (a: string, b: string) => a.trim().replace(/^#/, "").toLowerCase() === b.trim().replace(/^#/, "").toLowerCase();
+
+export interface ShopifyCustomer {
+  id: string;
+  name: string;
+  email: string | null;
+  location: string | null;
+  ordersCount: number | null;
+  totalSpent: number | null;
+  since: string | null;
+  /** Newest first, at most 10 */
+  orders: RailOrder[];
+}
+
+/** The Shopify customer whose email is exactly this address (case-insensitive), or null */
+export async function findCustomerIdByEmail(config: ShopifyConfig, email: string): Promise<string | null> {
+  const want = email.trim().toLowerCase();
+  if (!searchable(want) || !want.includes("@")) return null;
+  const data = await shopifyQuery<{ customers?: { nodes?: CustomerNode[] } }>(config, CUSTOMER_ID_BY_EMAIL, { query: `email:"${want}"` });
+  // Shopify's search is fuzzy: only an exact address counts
+  const match = (data.customers?.nodes ?? []).filter((c) => c.defaultEmailAddress?.emailAddress?.trim().toLowerCase() === want);
+  return match.length === 1 ? match[0].id : null;
+}
+
+export async function getCustomerWithOrders(config: ShopifyConfig, customerId: string): Promise<ShopifyCustomer | null> {
+  const data = await shopifyQuery<{ customer?: CustomerNode | null }>(config, CUSTOMER_WITH_ORDERS, { id: customerId });
+  const c = data.customer;
+  if (!c || c.id !== customerId) return null;
+  const email = s(c.defaultEmailAddress?.emailAddress);
+  return {
+    id: c.id,
+    name: [c.firstName, c.lastName].filter(Boolean).join(" ") || email || "Customer",
+    email,
+    location: [c.defaultAddress?.city, c.defaultAddress?.provinceCode, c.defaultAddress?.countryCodeV2].filter(Boolean).join(", ") || null,
+    ordersCount: n(c.numberOfOrders),
+    totalSpent: n(c.amountSpent?.amount),
+    since: s(c.createdAt),
+    orders: (c.orders?.nodes ?? []).filter((o) => o.customer?.id === c.id).map(toRailOrder),
+  };
+}
+
+/** An order by name, only if it belongs to this customer; otherwise null */
+export async function getOrderForCustomer(config: ShopifyConfig, customerId: string, name: string): Promise<RailOrder | null> {
+  const want = name.trim();
+  if (!searchable(want) || want.length > 40) return null;
+  const data = await shopifyQuery<{ orders?: { nodes?: OrderNode[] } }>(config, ORDERS_BY_NAME, { query: `name:"${want}"` });
+  const order = (data.orders?.nodes ?? []).find((o) => sameName(o.name, want) && o.customer?.id === customerId);
+  return order ? toRailOrder(order) : null;
+}

@@ -17,12 +17,16 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  // Email customer keys belong to real senders: a simulated ticket can't file under one
+  if (String(body.customer.sourceKey).startsWith("email:")) {
+    return Response.json({ error: "customer.sourceKey can't be an email key" }, { status: 400 });
+  }
   if (body.simReturn && !/^#S\d+$/.test(body.orderName ?? "")) {
     return Response.json({ error: "simReturn needs a simulated orderName (#S…)" }, { status: 400 });
   }
   const { simReturn, ...input } = body;
   const id = transaction(getDb(), () => {
-    const ticketId = createSimTicket({ ...input, channel: "simulator" });
+    const ticketId = createSimTicket({ ...input, channel: "simulator", senderVerified: null });
     if (simReturn) createSimReturn(ticketId, input.orderName!, simReturn);
     return ticketId;
   });

@@ -372,4 +372,13 @@ export const SIM_MIGRATIONS: Migration[] = [
         CREATE INDEX alerts_status ON alerts(status, next_attempt_at);
       `),
   },
+  {
+    version: 10,
+    name: "sender verification for store lookups",
+    up: (db) =>
+      db.exec(`
+        -- 1: the sender passed DMARC, or staff opened the ticket; 0: a message failed; NULL: unknown
+        ALTER TABLE sim_tickets ADD COLUMN sender_verified INTEGER;
+      `),
+  },
 ];

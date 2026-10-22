@@ -4,14 +4,13 @@
 //   npm run helpdesk -- <command> [args] [--json]
 //
 // Commands
-//   status                          service, site, store, ticket counts and last backup
+//   status                          service, site, Shopify store, ticket counts and last backup
 //   tickets [--sim|--history] [--q TEXT] [--limit N] [--offset N]
 //   show <ticketId>                 one ticket with customer, messages, history
 //   reply <ticketId> <text>         reply as the agent (simulated tickets only)
 //   customer <ticketId> <text>      reply as the simulated customer
 //   close <ticketId> | reopen <ticketId> | pending <ticketId>
 //   similar <ticketId>              similar historical tickets
-//   order <#S1001>                  a simulated order in the demo store
 //   products <query> | customers <query>   search the store export
 //   restart                         rebuild + restart the production service
 //   logs [N]                        last N lines of the service log (default 50)
@@ -92,6 +91,27 @@ function ticketLine(t) {
   return `${t.id.padEnd(10)} ${state.padEnd(8)} ${(t.createdAt ?? "").slice(0, 16).padEnd(17)} ${who.slice(0, 22).padEnd(23)} ${t.subject ?? "(no subject)"}`;
 }
 
+// Shopify connection: the shop's name and the app's scopes (read-only), never order or customer data
+const SHOPIFY_SCOPES = ["read_customers", "read_orders"];
+async function shopifyStatus() {
+  (await import("./env.ts")).loadEnv(root);
+  const { shopifyConfig, shopifyQuery } = await import("../lib/shopify.ts");
+  const config = shopifyConfig();
+  if (!config) return "Shopify not configured (SHOPIFY_* in .env.local)";
+  try {
+    const d = await shopifyQuery(config, "{ shop { name } currentAppInstallation { accessScopes { handle } } }");
+    const granted = (d.currentAppInstallation?.accessScopes ?? []).map((s) => s.handle);
+    // read_orders is implied by write_orders, read_customers by write_customers
+    const missing = SHOPIFY_SCOPES.filter((s) => !granted.includes(s) && !granted.includes(s.replace("read_", "write_")));
+    const old = granted.includes("read_all_orders") ? "" : "; orders older than 60 days need read_all_orders";
+    return missing.length
+      ? `Shopify ${config.shop}.myshopify.com (${d.shop.name}) connected, but missing scopes: ${missing.join(", ")}`
+      : `Shopify ${config.shop}.myshopify.com (${d.shop.name}) connected${old}`;
+  } catch (e) {
+    return `Shopify ${config.shop}.myshopify.com FAILED: ${e.message}`;
+  }
+}
+
 // Backups and the ops monitor read their settings (BACKUP_S3_*) from process.env
 async function backupLib() {
   (await import("./env.ts")).loadEnv(root);
@@ -116,9 +136,7 @@ const commands = {
     const [sim, hist, store] = await Promise.all([
       api("/api/helpdesk/tickets?source=sim&limit=1"),
       api("/api/helpdesk/tickets?limit=1"),
-      fetch(`${BASE}/api/helpdesk/orders?name=%23S0`, {
-        headers: env.SIM_API_KEY ? { authorization: `Bearer ${env.SIM_API_KEY}` } : {},
-      }).then((r) => r.status),
+      shopifyStatus(),
     ]);
     // The inbox holds simulated, real-email and staff tickets: count each channel separately
     const [simOnly, emailOnly] = await Promise.all([
@@ -142,7 +160,7 @@ const commands = {
       ready: ready ? ready.ready : null,
       checks: ready?.checks ?? null,
       site: { url: SITE, httpStatus: site },
-      store: store === 503 ? "not configured" : "connected",
+      store,
       inboxTickets: { total: sim.total, simulated: simOnly.total, email: emailOnly.total, ...byStatus },
       historicalTickets: hist.total,
       model: env.CF_MODEL || "@cf/zai-org/glm-5.3-flash",
@@ -226,20 +244,6 @@ const commands = {
   async similar(id = need(rest[0], "similar <ticketId>")) {
     const d = await api(`/api/helpdesk/tickets/${encodeURIComponent(id)}/similar?limit=8`);
     out(d, () => d.tickets.map((t) => `${String(t.similarity).padStart(3)}%  ${ticketLine(t)}`).join("\n") || "no similar tickets");
-  },
-
-  async order(name = need(rest[0], "order <#S1001>")) {
-    const n = name.startsWith("#") ? name : `#${name}`;
-    const d = await api(`/api/helpdesk/orders?name=${encodeURIComponent(n)}`);
-    const o = d.order;
-    out(d, () =>
-      [
-        `${o.name}  $${o.total_price}  ${o.financial_status} · ${o.fulfillment_status ?? "unfulfilled"}${o.cancelled_at ? " · CANCELLED" : ""}  (${o.created_at})`,
-        ...o.line_items.map((l) => `  ${l.quantity}× ${l.title}  $${l.price}`),
-        o.fulfillments.length ? `shipping: ${o.fulfillments.map((f) => `${f.tracking_company} ${f.tracking_number} (${f.status})`).join(", ")}` : "shipping: not shipped",
-        o.refunds.length ? `refunds: ${o.refunds.flatMap((r) => r.transactions.map((t) => `$${t.amount}`)).join(", ")}` : null,
-      ].filter(Boolean).join("\n"),
-    );
   },
 
   async products(q = need(rest.join(" "), "products <query>")) {
