@@ -124,7 +124,7 @@ test("pages redirect to /login, APIs answer 401, without a session", () => {
 });
 
 test("public paths pass", () => {
-  for (const p of ["/login", "/api/auth/login", "/api/health", "/api/ready", "/api/helpdesk/inbound/ses", "/robots.txt"]) {
+  for (const p of ["/login", "/api/auth/login", "/api/health", "/api/ready", "/api/helpdesk/inbound/ses", "/api/shopify/webhooks", "/robots.txt"]) {
     assert.equal(run(p).headers.get("x-middleware-next"), "1", p);
   }
 });

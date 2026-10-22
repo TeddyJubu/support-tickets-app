@@ -16,7 +16,7 @@ export function notifyOwners(d: DatabaseSync, kind: NotificationKind, ticketId: 
 }
 
 export interface AlertInput {
-  kind: "urgent_ticket" | "worker_down" | "worker_recovered" | "test";
+  kind: "urgent_ticket" | "worker_down" | "worker_recovered" | "test" | "shopify";
   ticketId?: string | null;
   severity?: string | null;
   subject: string;

@@ -1,10 +1,10 @@
 "use client";
 
-// Links between the console's pages (inbox, knowledge base, overview, alerts)
+// Links between the console's pages (inbox, knowledge base, overview, alerts, settings)
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Inbox, BookOpen, LayoutDashboard, BellRing } from "lucide-react";
+import { Inbox, BookOpen, LayoutDashboard, BellRing, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/kb", label: "Knowledge base", icon: BookOpen },
   { href: "/overview", label: "Overview", icon: LayoutDashboard },
   { href: "/alerts", label: "Alerts", icon: BellRing },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function AppNav({ className }: { className?: string }) {

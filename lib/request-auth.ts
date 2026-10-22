@@ -50,7 +50,7 @@ export function clientIp(request: Request) {
   return (request.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "local";
 }
 
-const isHttps = (request: Request) =>
+export const isHttps = (request: Request) =>
   request.headers.get("x-forwarded-proto") === "https" || new URL(request.url).protocol === "https:";
 
 export function sessionCookie(request: Request, token: string, expires: Date) {

@@ -95,9 +95,13 @@ function ticketLine(t) {
 const SHOPIFY_SCOPES = ["read_customers", "read_orders"];
 async function shopifyStatus() {
   (await import("./env.ts")).loadEnv(root);
-  const { shopifyConfig, shopifyQuery } = await import("../lib/shopify.ts");
+  const { shopifyConfig, shopifyQuery, shopPinned } = await import("../lib/shopify.ts");
   const config = shopifyConfig();
-  if (!config) return "Shopify not configured (SHOPIFY_* in .env.local)";
+  if (!config) {
+    const saved = shopPinned() ? null : (await import("../lib/shopify-tokens.ts")).storedConnection();
+    if (saved?.status === "reconnect") return `Shopify ${saved.shop}.myshopify.com needs reconnecting in Settings: ${saved.lastError ?? "keys refused"}`;
+    return "Shopify not connected (an owner connects a store in Settings; the app needs SHOPIFY_CLIENT_ID/SECRET in .env.local)";
+  }
   try {
     const d = await shopifyQuery(config, "{ shop { name } currentAppInstallation { accessScopes { handle } } }");
     const granted = (d.currentAppInstallation?.accessScopes ?? []).map((s) => s.handle);
@@ -106,7 +110,7 @@ async function shopifyStatus() {
     const old = granted.includes("read_all_orders") ? "" : "; orders older than 60 days need read_all_orders";
     return missing.length
       ? `Shopify ${config.shop}.myshopify.com (${d.shop.name}) connected, but missing scopes: ${missing.join(", ")}`
-      : `Shopify ${config.shop}.myshopify.com (${d.shop.name}) connected${old}`;
+      : `Shopify ${config.shop}.myshopify.com (${d.shop.name}) connected${config.source === "settings" ? " from Settings" : ""}${old}`;
   } catch (e) {
     return `Shopify ${config.shop}.myshopify.com FAILED: ${e.message}`;
   }

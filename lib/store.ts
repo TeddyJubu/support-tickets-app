@@ -1,4 +1,4 @@
-// Customer rail data from the Cute Things Shopify store, cached per ticket. If Shopify is slow
+// Customer rail data from the connected Shopify store, cached per ticket. If Shopify is slow
 // or down, the last successful read is shown with its age. Store data is only read for an
 // email ticket from a verified sender, and only that sender's own customer record and orders;
 // simulated tickets have none. Amounts Shopify doesn't return are null ("unavailable"), never 0.
@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { isoFromSql } from "./db";
 import { getDb } from "./sim-db";
 import { findCustomerIdByEmail, getCustomerWithOrders, getOrderForCustomer, shopifyConfig, type ShopifyConfig } from "./shopify";
+import { storedConnection } from "./shopify-tokens";
 import { returnsForTicket, type SimReturn } from "./returns";
 
 const FRESH_SECONDS = 300;
@@ -74,7 +75,10 @@ export function storeAccess(ticketId: string): Access {
     .get(ticketId) as Row | undefined;
   if (!t) return { ok: false, reason: "Ticket not found", status: 404 };
   const config = shopifyConfig();
-  if (!config) return { ok: false, reason: "The Shopify store isn't connected.", status: 503 };
+  if (!config) {
+    const reconnect = storedConnection()?.status === "reconnect";
+    return { ok: false, reason: reconnect ? "The Shopify store needs reconnecting (Settings)." : "The Shopify store isn't connected.", status: 503 };
+  }
   const key = String(t.source_key ?? "");
   if (t.channel !== "email" || !key.startsWith("email:")) return { ok: false, reason: "Simulated tickets have no store data.", status: 403 };
   const email = String(t.email ?? "").trim().toLowerCase();

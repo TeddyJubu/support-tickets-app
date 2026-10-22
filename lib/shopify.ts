@@ -1,51 +1,89 @@
-// Read-only client for the Cute Things store's Shopify Admin GraphQL API. Only queries go out:
-// anything that looks like a mutation is refused before it's sent. Callers are always scoped
-// to one customer (lib/store.ts decides who may be looked up). Runs only on the server.
+// Read-only client for the store's Shopify Admin GraphQL API. Only queries go out: anything
+// that looks like a mutation is refused before it's sent (the one exception, uninstalling the
+// app on Disconnect, is in lib/shopify-connect.ts). Callers are always scoped to one customer
+// (lib/store.ts decides who may be looked up). Runs only on the server.
 //
-// Needs: SHOPIFY_SHOP (the myshopify subdomain, e.g. cute-things) and either
-//   SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET  an app in the same Dev Dashboard org as the store;
-//                                              24-hour tokens come from the client credentials grant
-//   SHOPIFY_ADMIN_TOKEN                        a fixed Admin API token, used as is
+// Which store:
+//   Settings (the usual way)  the owner connects any store in Settings → Shopify store
+//                             (lib/shopify-connect.ts); needs SHOPIFY_CLIENT_ID +
+//                             SHOPIFY_CLIENT_SECRET, the app the store installs. Its keys are
+//                             in sim.db (lib/shopify-tokens.ts).
+//   SHOPIFY_SHOP in .env.local pins one store (the myshopify subdomain, e.g. cute-things),
+//                             and Settings can't change it. With it, either
+//     SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET  an app in the same Dev Dashboard org as the
+//                                                store; 24-hour client credentials tokens
+//     SHOPIFY_ADMIN_TOKEN                        a fixed Admin API token, used as is
 // Optional: SHOPIFY_API_VERSION (default 2026-10).
 // Scopes: read_customers, read_orders (read_all_orders for orders older than 60 days), and
 // protected customer data access for names and email addresses.
 
 import type { RailOrder } from "./store";
+import { settingsAccessToken, storedConnection, type ShopifyApp } from "./shopify-tokens";
 
 export const DEFAULT_API_VERSION = "2026-10";
 const TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 3;
 
 export interface ShopifyConfig {
+  /** The myshopify subdomain (cute-things) */
   shop: string;
   apiVersion: string;
   clientId: string | null;
   clientSecret: string | null;
   adminToken: string | null;
+  /** env: pinned by SHOPIFY_SHOP; settings: connected by the owner in Settings */
+  source: "env" | "settings";
 }
 
-export function shopifyConfig(env: Record<string, string | undefined> = process.env): ShopifyConfig | null {
-  const shop = (env.SHOPIFY_SHOP ?? "")
+/** "Cute-Things.myshopify.com", "https://cute-things.myshopify.com/" or "cute-things" → "cute-things"; null if it isn't one */
+export function normalizeShop(input: string | null | undefined): string | null {
+  const shop = (input ?? "")
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, "")
-    .replace(/\.myshopify\.com\/?$/, "");
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(shop)) return null;
-  const adminToken = env.SHOPIFY_ADMIN_TOKEN?.trim() || null;
-  const clientId = env.SHOPIFY_CLIENT_ID?.trim() || null;
-  const clientSecret = env.SHOPIFY_CLIENT_SECRET?.trim() || null;
-  if (!adminToken && !(clientId && clientSecret)) return null;
-  const version = env.SHOPIFY_API_VERSION?.trim() ?? "";
-  return { shop, apiVersion: /^\d{4}-\d{2}$/.test(version) ? version : DEFAULT_API_VERSION, clientId, clientSecret, adminToken };
+    .replace(/\/+$/, "")
+    .replace(/\.myshopify\.com$/, "");
+  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(shop) ? shop : null;
 }
 
-// Client credentials tokens last 24 hours; one is kept in memory and replaced 5 minutes early
+/** The Shopify app this copy signs in as, if its credentials are set */
+export function shopifyApp(env: Record<string, string | undefined> = process.env): ShopifyApp | null {
+  const clientId = env.SHOPIFY_CLIENT_ID?.trim();
+  const clientSecret = env.SHOPIFY_CLIENT_SECRET?.trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+/** SHOPIFY_SHOP is set: the store is fixed in .env.local, not chosen in Settings */
+export const shopPinned = (env: Record<string, string | undefined> = process.env) => !!env.SHOPIFY_SHOP?.trim();
+
+export function shopifyApiVersion(env: Record<string, string | undefined> = process.env) {
+  const version = env.SHOPIFY_API_VERSION?.trim() ?? "";
+  return /^\d{4}-\d{2}$/.test(version) ? version : DEFAULT_API_VERSION;
+}
+
+export function shopifyConfig(env: Record<string, string | undefined> = process.env): ShopifyConfig | null {
+  const apiVersion = shopifyApiVersion(env);
+  const app = shopifyApp(env);
+  if (shopPinned(env)) {
+    const shop = normalizeShop(env.SHOPIFY_SHOP);
+    const adminToken = env.SHOPIFY_ADMIN_TOKEN?.trim() || null;
+    if (!shop || (!adminToken && !app)) return null;
+    return { shop, apiVersion, clientId: app?.clientId ?? null, clientSecret: app?.clientSecret ?? null, adminToken, source: "env" };
+  }
+  const saved = app ? storedConnection() : null;
+  if (!app || saved?.status !== "connected") return null;
+  return { shop: saved.shop, apiVersion, clientId: app.clientId, clientSecret: app.clientSecret, adminToken: null, source: "settings" };
+}
+
+// Client credentials tokens (a pinned store) last 24 hours; one is kept in memory and replaced 5 minutes early
 let token: { key: string; value: string; expiresAt: number } | null = null;
 
-async function accessToken(config: ShopifyConfig, renew = false): Promise<string> {
+// refused: the token Shopify just turned down, so a new one is needed
+async function accessToken(config: ShopifyConfig, refused: string | null): Promise<string> {
   if (config.adminToken) return config.adminToken;
+  if (config.source === "settings") return settingsAccessToken({ clientId: config.clientId ?? "", clientSecret: config.clientSecret ?? "" }, refused);
   const key = `${config.shop}:${config.clientId}`;
-  if (!renew && token?.key === key && token.expiresAt - Date.now() > 5 * 60_000) return token.value;
+  if (!refused && token?.key === key && token.expiresAt - Date.now() > 5 * 60_000) return token.value;
   const res = await fetch(`https://${config.shop}.myshopify.com/admin/oauth/access_token`, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
@@ -93,14 +131,17 @@ function retryDelay(res: Response, body: GraphQLBody | null, attempt: number) {
 /** Run one read query. Throws on HTTP, GraphQL (even in a 200) and sign-in errors. */
 export async function shopifyQuery<T>(config: ShopifyConfig, query: string, variables: Record<string, unknown> = {}): Promise<T> {
   if (/\b(mutation|subscription)\b/i.test(query)) throw new Error("Only read queries can be sent to Shopify");
-  let renew = false;
+  let refused: string | null = null;
+  let renewed = false;
   for (let attempt = 0; ; attempt++) {
+    const used = await accessToken(config, refused);
+    refused = null;
     const res = await fetch(`https://${config.shop}.myshopify.com/admin/api/${config.apiVersion}/graphql.json`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json",
-        "x-shopify-access-token": await accessToken(config, renew),
+        "x-shopify-access-token": used,
       },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -109,11 +150,11 @@ export async function shopifyQuery<T>(config: ShopifyConfig, query: string, vari
     const body = (await res.json().catch(() => null)) as GraphQLBody | null;
     const last = attempt + 1 >= MAX_ATTEMPTS;
     // An expired or revoked token: get a new one once
-    if (res.status === 401 && !config.adminToken && !renew) {
-      renew = true;
+    if (res.status === 401 && !config.adminToken && !renewed) {
+      renewed = true;
+      refused = used;
       continue;
     }
-    renew = false;
     const errors = Array.isArray(body?.errors) ? body.errors : [];
     const throttled = res.status === 429 || errors.some((e) => e.extensions?.code === "THROTTLED");
     if ((throttled || res.status >= 500) && !last) {
