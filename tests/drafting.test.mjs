@@ -476,3 +476,10 @@ test("cleaner blocks claims of marking, escalating or passing on a request", () 
     assert.equal(cleanDraft(`Hi,\n\n${fine}`, false).suppressed, false, fine);
   }
 });
+
+test("drafting prompt keeps the team's voice, the customer's business and gift orders safe", () => {
+  const prompt = run.systemPrompt("token123");
+  assert.match(prompt, /never mention what you can or can't see/);
+  assert.match(prompt, /Never suggest buying elsewhere/);
+  assert.match(prompt, /gift recipient who isn't the buyer: don't agree to an exchange/);
+});
