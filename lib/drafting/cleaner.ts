@@ -60,6 +60,10 @@ const ACTION_CLAIM = new RegExp(
     // Hand-offs the AI can't make: "I'm escalating this", "this has been marked urgent / passed on"
     `\\b(?:we|i)\\s*(?:['’]re|['’]m|\\s+am|\\s+are)\\s+(?:escalating|forwarding|flagging|marking|passing)\\b`,
     `\\b(?:this|it|that|your\\s+(?:request|order|ticket|case|message|issue))\\s+(?:has\\s+been|is\\s+being|was)\\s+(?:escalated|forwarded|flagged|marked|passed)\\b`,
+    // Promised results: "you can expect a corrected invoice", "you'll receive a replacement"
+    `\\byou\\s*(?:['’]ll|\\s+will|\\s+can|\\s+should)\\s+(?:expect|receive|get|be\\s+getting)\\s+(?:a|an|your)\\s+(?:corrected|revised|updated|new|replacement|reissued)\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,
+    // Claims about the ticket the AI can't see or change: "the photos have been added to the ticket"
+    `\\b(?:been|were|was)\\s+(?:added|attached|saved|logged|uploaded)\\s+to\\s+(?:the|your)\\s+(?:ticket|case|file|order|account|notes?|records?)\\b`,
   ].join("|"),
   "i",
 );
@@ -126,9 +130,26 @@ function shorten(text: string, max: number) {
   return { text: `${text.slice(0, cut).trim()}${signOff ? `\n\n${signOff[0].trim()}` : ""}`, tail };
 }
 
+// Drafts go out as plain-text email: markdown would show as literal asterisks and hashes
+function stripMarkdown(text: string) {
+  const out = text
+    .replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_, a, b) => a ?? b)
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,!?;:)]|$)/gm, "$1$2")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^(\s*)[*•]\s+/gm, "$1- ")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
+    .replace(/`([^`\n]+)`/g, "$1");
+  return { text: out, changed: out !== text };
+}
+
 export function cleanDraft(raw: string, sensitive: boolean): CleanResult {
   let text = (raw ?? "").replace(/\r/g, "").trim();
   const notes: string[] = [];
+  const md = stripMarkdown(text);
+  if (md.changed) {
+    text = md.text;
+    notes.push("removed markdown formatting");
+  }
   const removed: string[] = [];
   if (!text) return { text: "", suppressed: true, notes: ["empty draft"], removed: "" };
   for (let i = 0; i < 4; i++) {
