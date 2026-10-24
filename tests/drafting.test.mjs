@@ -11,7 +11,7 @@ import { test } from "node:test";
 const tables = await importApp("lib/classifier/tables.ts");
 const { classify } = await importApp("lib/classifier/index.ts");
 const { shouldDraft } = await importApp("lib/classifier/text.ts");
-const { cleanDraft } = await importApp("lib/drafting/cleaner.ts");
+const { cleanDraft, fixSignOff } = await importApp("lib/drafting/cleaner.ts");
 const markersMod = await importApp("lib/drafting/markers.ts");
 const queue = await importApp("lib/drafting/queue.ts");
 const run = await importApp("lib/drafting/run.ts");
@@ -482,4 +482,32 @@ test("drafting prompt keeps the team's voice, the customer's business and gift o
   assert.match(prompt, /never mention what you can or can't see/);
   assert.match(prompt, /Never suggest buying elsewhere/);
   assert.match(prompt, /gift recipient who isn't the buyer: don't agree to an exchange/);
+});
+
+test("the sign-off is always the configured sender name", () => {
+  const S = "Cute Things Support";
+  const cases = [
+    ["Hi,\n\nThanks!\n\nWarmly,\nCute Little Things", "Hi,\n\nThanks!\n\nWarmly,\nCute Things Support", true],
+    ["Hi,\n\nThanks!\n\nCute Things Team Cute Things", "Hi,\n\nThanks!\n\nCute Things Support", true],
+    ["Hi,\n\nThanks!\n\nCute Things Team\nCute Things", "Hi,\n\nThanks!\n\nCute Things Support", true],
+    ["Hi,\n\nThanks!\n\nWarm regards,\nThe Buttons Bebe Team", "Hi,\n\nThanks!\n\nWarm regards,\nCute Things Support", true],
+    ["Hi,\n\nThanks!\n\nWarmly,", "Hi,\n\nThanks!\n\nWarmly,\nCute Things Support", true],
+    ["Hi,\n\nThanks for your patience.", "Hi,\n\nThanks for your patience.\n\nCute Things Support", true],
+    ["Hi,\n\nThanks!\n\nWarmly,\nCute Things Support", "Hi,\n\nThanks!\n\nWarmly,\nCute Things Support", false],
+    ["שלום,\n\nתודה על הסבלנות,\nCute Things Support", "שלום,\n\nתודה על הסבלנות,\nCute Things Support", false],
+  ];
+  for (const [input, want, changed] of cases) {
+    const r = fixSignOff(input, S);
+    assert.equal(r.text, want, input);
+    assert.equal(r.changed, changed, input);
+  }
+});
+
+test("a draft with an invented sign-off is saved with the store's", async () => {
+  const { detail } = await draftOne("Sign-off test: how long is shipping?", (t) =>
+    wrap(t, "Hi Maya,\n\nOrders ship within 24 to 48 hours.\n\nWarmly,\nThe Buttons Bebe Team"),
+  );
+  assert.match(detail.ai.draft.body, /Warmly,\n.+ Support$/);
+  assert.doesNotMatch(detail.ai.draft.body, /Buttons Bebe Team/);
+  assert.ok(detail.ai.draft.flags.includes("set the sign-off to the store's sender name"));
 });

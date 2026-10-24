@@ -7,7 +7,7 @@ import { classify, maxSeverity, SEVERITY_RANK, type Classification, type Severit
 import { getDb, getSimTicketDetail } from "../sim-db";
 import { AiError, aiConfig, chatCompletion, type ChatMessage } from "../workers-ai";
 import { activeNotices } from "../kb/notices";
-import { cleanDraft, findActionClaim } from "./cleaner";
+import { cleanDraft, findActionClaim, fixSignOff } from "./cleaner";
 import { extract, markers, neutralize, newRunToken, type Verdict } from "./markers";
 import { finishJob, failJob, type ErrorKind, type Job } from "./queue";
 import { runTool, TOOLS, type ToolContext } from "./tools";
@@ -203,15 +203,17 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
   const used = parsed.verdict.kbUsed.filter((t) => [...ctx.kbTitles].some((k) => t.includes(k) || k.includes(t)));
   const verdict: Verdict = { ...parsed.verdict, kbUsed: (used.length ? used : [...ctx.kbTitles]).slice(0, 8) };
   const needsStaff = verdict.action === "needs_staff" || verdict.missingFacts.length > 0 || cleaned.suppressed;
+  const signed = cleaned.suppressed ? null : fixSignOff(cleaned.text, storeSettings().senderName);
 
   return saveDraft(job, {
-    body: cleaned.suppressed ? "" : cleaned.text,
+    body: signed?.text ?? "",
     action: needsStaff ? "needs_staff" : "reply",
     severity,
     sensitive,
     verdict,
     flags: [
       ...cleaned.notes,
+      ...(signed?.changed ? ["set the sign-off to the store's sender name"] : []),
       ...(ctx.calls.some((c) => !c.ok) ? ["a lookup failed while drafting"] : []),
       // The prompt requires a KB search for policy answers; tell staff when none happened
       ...(!ctx.calls.some((c) => c.name === "search_kb" && c.ok) && !cleaned.suppressed ? ["written without a knowledge-base lookup: check any policy facts"] : []),
