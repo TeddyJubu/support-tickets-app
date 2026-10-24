@@ -69,7 +69,8 @@ function customer(s) {
   const last = rest.join(" ") || "Customer";
   const local = `${first}.${last}`.toLowerCase().replace(/[^a-z.]/g, "");
   return {
-    sourceKey: `scenario-${hash.slice(0, 24)}`,
+    // Hash first: the helpdesk keys customers by the first 12 characters
+    sourceKey: `${hash.slice(0, 24)}-scenario`,
     firstName: first,
     lastName: last,
     email: `${local}.${hash.slice(0, 4)}@customers.bb-sim.test`,
