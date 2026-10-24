@@ -31,13 +31,13 @@ const SELF_TALK = [
 ];
 const SELF_TALK_LINE = new RegExp(`^[\\s>*#\\-]*(?:${SELF_TALK.join("|")})`, "i");
 
-const VERBS = "switch|change|cancel|replace|ship|refund|credit|issue|process|create|invoice|prioritize|hold|flag|contact|notify|remove|add|apply|arrange|leave|correct|resolve";
+const VERBS = "switch|change|cancel|replace|ship|refund|credit|issue|process|create|invoice|prioritize|hold|flag|mark|escalate|forward|pass (?:this |it |that |your \\w+ )?(?:along|on)|contact|notify|remove|add|apply|arrange|leave|correct|resolve";
 const PARTICIPLES =
-  "switched|updated|changed|cancelled|canceled|replaced|shipped|sent|issued|processed|refunded|credited|created|prioritized|held|flagged|contacted|notified|removed|added|applied|arranged|left|corrected|resolved";
+  "switched|updated|changed|cancelled|canceled|replaced|shipped|sent|issued|processed|refunded|credited|created|prioritized|held|flagged|marked|escalated|forwarded|passed|contacted|notified|removed|added|applied|arranged|left|corrected|resolved";
 // After "we can": only money and order changes count as a promise ("we can refund you")
 const CAN_VERBS = "refund|credit|issue|process|cancel|replace|invoice|prioritize|hold|remove|apply|arrange|resolve|change your order|change the order";
 // Past-tense claims of a store action ("we processed / refunded / cancelled")
-const ORDER_PAST = "processed|refunded|credited|issued|cancelled|canceled|replaced|shipped|sent out|changed|updated|corrected|resolved|applied|arranged|removed|added";
+const ORDER_PAST = "flagged|marked|escalated|forwarded|passed (?:this |it |that |your \\w+ )?(?:along|on)|processed|refunded|credited|issued|cancelled|canceled|replaced|shipped|sent out|changed|updated|corrected|resolved|applied|arranged|removed|added";
 const OBJECTS = "label|refund|credit|replacement|invoice|warehouse|order|shipment|package|address";
 const UPDATE = "update(?!\\s+(?:you|yourself|us|the\\s+customer)\\b)";
 const WHO = "(?:we|i|our team|the team|the store|store|warehouse|a human|human)";
@@ -57,6 +57,9 @@ const ACTION_CLAIM = new RegExp(
     `\\b(?:we|i|our team|the team)\\s+(?:just\\s+|already\\s+)?(?:${ORDER_PAST})\\b`,
     `\\b${WHO}\\s+(?:will|would|are going to|is going to)\\s+send\\b[^.!?\\n]{0,80}\\b(?:prepaid\\s+|return\\s+)?(?:${OBJECTS})\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,
     `\\b(?:your\\s+)?(?:refund|replacement|exchange|cancellation)\\s+(?:has\\s+been|is\\s+being|was)\\s+(?:issued|processed|approved|sent|completed)\\b`,
+    // Hand-offs the AI can't make: "I'm escalating this", "this has been marked urgent / passed on"
+    `\\b(?:we|i)\\s*(?:['’]re|['’]m|\\s+am|\\s+are)\\s+(?:escalating|forwarding|flagging|marking|passing)\\b`,
+    `\\b(?:this|it|that|your\\s+(?:request|order|ticket|case|message|issue))\\s+(?:has\\s+been|is\\s+being|was)\\s+(?:escalated|forwarded|flagged|marked|passed)\\b`,
   ].join("|"),
   "i",
 );
