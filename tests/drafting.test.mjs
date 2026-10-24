@@ -513,3 +513,34 @@ test("a draft with an invented sign-off is saved with the store's", async () => 
   assert.doesNotMatch(detail.ai.draft.body, /Buttons Bebe Team/);
   assert.ok(detail.ai.draft.flags.includes("set the sign-off to the store's sender name"));
 });
+
+test("cleaner holds back talk about the ticket or the AI's own access", () => {
+  for (const talk of [
+    "Your note about the 8th is right here in the ticket, so whoever picks it up will see it.",
+    "I don't have access to the exchange records from my side.",
+    "I'm not able to see live order details.",
+    "Your order number is already in this ticket.",
+  ]) {
+    const r = cleanDraft(`Hi,\n\n${talk}`, false);
+    assert.equal(r.suppressed, true, talk);
+    assert.ok(r.notes.some((n) => n.includes("talked about the ticket")), talk);
+  }
+  for (const fine of [
+    "We handle everything by email in this thread so nothing gets lost.",
+    "You can see the tracking in your shipping email.",
+    "On our end, orders ship within two days.",
+  ]) {
+    assert.equal(cleanDraft(`Hi,\n\n${fine}`, false).suppressed, false, fine);
+  }
+});
+
+test("a draft that talks about the ticket gets one rephrase turn", async () => {
+  const { detail } = await draftOne("Ticket-talk test: where is my package?", (t, body) => {
+    const asked = body.messages.some((m) => m.role === "user" && /without mentioning the ticket/.test(m.content ?? ""));
+    return asked
+      ? wrap(t, "Hi,\n\nOur team will check the tracking and reply with next steps.")
+      : wrap(t, "Hi,\n\nIt's noted in this ticket for whoever picks it up.");
+  });
+  assert.match(detail.ai.draft.body, /check the tracking/);
+  assert.ok(detail.ai.draft.flags.some((f) => f.includes("rephrased to remove talk about the ticket")));
+});

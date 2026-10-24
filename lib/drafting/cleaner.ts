@@ -68,6 +68,20 @@ const ACTION_CLAIM = new RegExp(
   "i",
 );
 
+// The email goes out from a person on the team: no talk about the ticket system or the AI's
+// own access ("it's in this ticket", "whoever picks it up", "from my side")
+const INTERNAL_TALK = new RegExp(
+  [
+    `\\b(?:in|on|to)\\s+(?:this|the|your)\\s+(?:ticket|case\\s+notes|internal\\s+notes)\\b`,
+    `\\bwhoever\\s+(?:picks|takes|handles|reads|gets)\\b`,
+    `\\bfrom\\s+my\\s+(?:side|end)\\b`,
+    `\\bi\\s+(?:don['’]t|do\\s+not)\\s+have\\s+access\\b`,
+    `\\bi\\s*(?:can['’]t|cannot|am\\s+not\\s+able\\s+to|['’]m\\s+not\\s+able\\s+to|am\\s+unable\\s+to)\\s+(?:see|access|view|look\\s+up|pull\\s+up)\\b`,
+  ].join("|"),
+  "i",
+);
+export const findInternalTalk = (text: string) => INTERNAL_TALK.exec(text)?.[0] ?? null;
+
 export const MAX_SENTENCES = { normal: 6, sensitive: 7 };
 
 export interface CleanResult {
@@ -176,6 +190,15 @@ export function cleanDraft(raw: string, sensitive: boolean): CleanResult {
       text: "",
       suppressed: true,
       notes: [...notes, `held back: it promised an action the AI can't take ("${claim[0]}")`],
+      removed: [...removed, text].join("\n\n"),
+    };
+  }
+  const internal = INTERNAL_TALK.exec(text);
+  if (internal) {
+    return {
+      text: "",
+      suppressed: true,
+      notes: [...notes, `held back: it talked about the ticket or its own access ("${internal[0]}")`],
       removed: [...removed, text].join("\n\n"),
     };
   }
