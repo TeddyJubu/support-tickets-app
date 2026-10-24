@@ -51,8 +51,8 @@ const ACTION_CLAIM = new RegExp(
     `\\b(?:we|i)\\s*['’](?:ll|ve)\\s+(?:${VERBS}|${UPDATE})\\b`,
     `\\b(?:we|i)\\s*['’]ll\\s+(?:get|have)\\s+(?:it|this|that|your(?:\\s+\\w+){0,3}|the(?:\\s+\\w+){0,3})\\s+(?:${PARTICIPLES})\\b`,
     `\\b(?:we|i)\\s*['’]ll\\s+take\\s+care\\s+of\\s+(?:it|this|that|your\\s+order)\\b`,
-    `\\b(?:we|i|our team|the team)\\s+(?:have|has|just|already)\\s+(?:${PARTICIPLES})\\b`,
-    `\\b(?:we|i)\\s*['\u2019]ve\\s+(?:just\\s+|already\\s+)?(?:${PARTICIPLES})\\b`,
+    `\\b(?:we|i|our team|the team)\\s+(?:have|has|just|already)\\s+(?:(?:also|now|just|already)\\s+)?(?:${PARTICIPLES})\\b`,
+    `\\b(?:we|i)\\s*['\u2019]ve\\s+(?:(?:just|already|also|now)\\s+)?(?:${PARTICIPLES})\\b`,
     // Simple past: "we processed your refund", "I cancelled the order"
     `\\b(?:we|i|our team|the team)\\s+(?:just\\s+|already\\s+)?(?:${ORDER_PAST})\\b`,
     `\\b${WHO}\\s+(?:will|would|are going to|is going to)\\s+send\\b[^.!?\\n]{0,80}\\b(?:prepaid\\s+|return\\s+)?(?:${OBJECTS})\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,

@@ -462,6 +462,8 @@ test("cleaner blocks claims of marking, escalating or passing on a request", () 
     "This has been marked as a priority.",
     "Your request has been forwarded to our returns team.",
     "I've forwarded this to shipping.",
+    "We've also flagged your accountant's deadline.",
+    "I have now escalated this.",
   ]) {
     assert.equal(cleanDraft(`Hi,\n\n${claim}`, false).suppressed, true, claim);
   }
