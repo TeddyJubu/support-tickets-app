@@ -7,7 +7,7 @@ import { classify, maxSeverity, SEVERITY_RANK, type Classification, type Severit
 import { getDb, getSimTicketDetail } from "../sim-db";
 import { AiError, aiConfig, chatCompletion, type ChatMessage } from "../workers-ai";
 import { activeNotices } from "../kb/notices";
-import { cleanDraft, findActionClaim, fixSignOff } from "./cleaner";
+import { cleanDraft, findActionClaim, findInternalTalk, fixSignOff } from "./cleaner";
 import { extract, markers, neutralize, newRunToken, type Verdict } from "./markers";
 import { finishJob, failJob, type ErrorKind, type Job } from "./queue";
 import { runTool, TOOLS, type ToolContext } from "./tools";
@@ -182,10 +182,17 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
   let sensitive = pre.sensitive || parsed.verdict.sensitive || reliedOnSensitive;
   let cleaned = cleanDraft(parsed.draft, sensitive);
   // A draft that promised an action gets one rephrase turn before it's held back for staff
+  // ...and so does one that talked about the ticket or its own access
   const claim = cleaned.suppressed ? findActionClaim(cleaned.removed) : null;
-  if (claim && deadline - Date.now() > 20_000) {
+  const internal = cleaned.suppressed && !claim ? findInternalTalk(cleaned.removed) : null;
+  const problem = claim
+    ? `Your draft says "${claim}", but you can't take that action and nobody has done it yet. Rewrite the email without saying that you or the team did, will do or can do it: explain the policy and what the customer can expect, and keep the staff action in staff_next_step.`
+    : internal
+      ? `Your draft says "${internal}". The email is sent by a person on the team: rewrite it without mentioning the ticket, who will pick it up, or what you can or can't see or access. Say what the team will check instead.`
+      : null;
+  if (problem && deadline - Date.now() > 20_000) {
     const rephrase = await chatCompletion(
-      [...messages, { role: "assistant", content: raw }, { role: "user", content: `Your draft says "${claim}", but you can't take that action and nobody has done it yet. Rewrite the email without saying that you or the team did, will do or can do it: explain the policy and what the customer can expect, and keep the staff action in staff_next_step. Answer again with exactly the DRAFT and RESULT blocks and nothing else.` }],
+      [...messages, { role: "assistant", content: raw }, { role: "user", content: `${problem} Answer again with exactly the DRAFT and RESULT blocks and nothing else.` }],
       { maxTokens: DRAFT_MAX_TOKENS, timeoutMs: Math.min(120_000, deadline - Date.now()) },
     );
     const again = extract(rephrase.content ?? "", token);
@@ -195,7 +202,7 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
         parsed = again;
         severity = maxSeverity(severity, again.verdict.severity);
         sensitive = sensitive || again.verdict.sensitive;
-        cleaned = { ...retried, notes: [...retried.notes, `rephrased to remove a promised action ("${claim}")`] };
+        cleaned = { ...retried, notes: [...retried.notes, claim ? `rephrased to remove a promised action ("${claim}")` : `rephrased to remove talk about the ticket ("${internal}")`] };
       }
     }
   }
