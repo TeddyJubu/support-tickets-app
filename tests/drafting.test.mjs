@@ -252,6 +252,21 @@ test("a draft that promises an action is held for staff, with no sendable text",
   assert.ok(detail.ai.draft.flags.some((f) => f.includes("promised an action")));
 });
 
+test("a draft that promises an action gets one rephrase turn", async () => {
+  let rephrases = 0;
+  const { detail } = await draftOne("Rephrase test: my dress has a hole", (t, body) => {
+    const asked = body.messages.some((m) => m.role === "user" && /you can't take that action/.test(m.content ?? ""));
+    if (asked) rephrases++;
+    return asked
+      ? wrap(t, "Hi,\n\nI'm sorry about the hole. Our team will review the photos and reply with the options.", { action: "needs_staff", staff_next_step: "Review the damage", sensitive: true })
+      : wrap(t, "Hi,\n\nI've flagged this for a refund.", { sensitive: true });
+  });
+  assert.equal(rephrases, 1);
+  assert.match(detail.ai.draft.body, /review the photos/);
+  assert.equal(detail.ai.draft.action, "needs_staff");
+  assert.ok(detail.ai.draft.flags.some((f) => f.includes("rephrased to remove a promised action")));
+});
+
 test("missing facts make it 'needs staff input'", async () => {
   const { detail } = await draftOne("Can I change my order?", (t) =>
     wrap(t, "Hi,\n\nCould you send your order number?", { missing_facts: ["order number"], staff_next_step: "Check if it shipped" }),

@@ -7,7 +7,7 @@ import { classify, maxSeverity, SEVERITY_RANK, type Classification, type Severit
 import { getDb, getSimTicketDetail } from "../sim-db";
 import { AiError, aiConfig, chatCompletion, type ChatMessage } from "../workers-ai";
 import { activeNotices } from "../kb/notices";
-import { cleanDraft } from "./cleaner";
+import { cleanDraft, findActionClaim } from "./cleaner";
 import { extract, markers, neutralize, newRunToken, type Verdict } from "./markers";
 import { finishJob, failJob, type ErrorKind, type Job } from "./queue";
 import { runTool, TOOLS, type ToolContext } from "./tools";
@@ -157,6 +157,7 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
     calls: [],
   };
   const { answer, messages } = await converse(systemPrompt(token), ticketPrompt(detail, latestId), ctx, deadline);
+  let raw = answer;
   let parsed = extract(answer, token);
   if (!parsed.ok && deadline - Date.now() > 20_000) {
     // One repair turn: the same conversation, asked to answer again in the required format
@@ -164,7 +165,8 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
       [...messages, { role: "assistant", content: answer }, { role: "user", content: `That didn't follow the required format (${parsed.error}). Answer again with exactly the DRAFT and RESULT blocks and nothing else.` }],
       { maxTokens: DRAFT_MAX_TOKENS, timeoutMs: Math.min(120_000, deadline - Date.now()) },
     );
-    parsed = extract(repair.content ?? "", token);
+    raw = repair.content ?? "";
+    parsed = extract(raw, token);
   }
   // Model flakiness, not a bad ticket: retry the job later (30 s, then 120 s)
   if (!parsed.ok) throw new DraftError(parsed.error, "transient");
@@ -173,9 +175,27 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
   // The KB doesn't raise priority: a sensitive article only marks the draft sensitive when the
   // model said it relied on it.
   const reliedOnSensitive = parsed.verdict.kbUsed.some((t) => [...ctx.kbSensitiveTitles].some((s) => t.includes(s) || s.includes(t)));
-  const severity = maxSeverity(pre.priority, parsed.verdict.severity);
-  const sensitive = pre.sensitive || parsed.verdict.sensitive || reliedOnSensitive;
-  const cleaned = cleanDraft(parsed.draft, sensitive);
+  let severity = maxSeverity(pre.priority, parsed.verdict.severity);
+  let sensitive = pre.sensitive || parsed.verdict.sensitive || reliedOnSensitive;
+  let cleaned = cleanDraft(parsed.draft, sensitive);
+  // A draft that promised an action gets one rephrase turn before it's held back for staff
+  const claim = cleaned.suppressed ? findActionClaim(cleaned.removed) : null;
+  if (claim && deadline - Date.now() > 20_000) {
+    const rephrase = await chatCompletion(
+      [...messages, { role: "assistant", content: raw }, { role: "user", content: `Your draft says "${claim}", but you can't take that action and nobody has done it yet. Rewrite the email without saying that you or the team did, will do or can do it: explain the policy and what the customer can expect, and keep the staff action in staff_next_step. Answer again with exactly the DRAFT and RESULT blocks and nothing else.` }],
+      { maxTokens: DRAFT_MAX_TOKENS, timeoutMs: Math.min(120_000, deadline - Date.now()) },
+    );
+    const again = extract(rephrase.content ?? "", token);
+    if (again.ok) {
+      const retried = cleanDraft(again.draft, sensitive || again.verdict.sensitive);
+      if (!retried.suppressed) {
+        parsed = again;
+        severity = maxSeverity(severity, again.verdict.severity);
+        sensitive = sensitive || again.verdict.sensitive;
+        cleaned = { ...retried, notes: [...retried.notes, `rephrased to remove a promised action ("${claim}")`] };
+      }
+    }
+  }
   // "Based on": the articles the model says it used (only ones search really returned), else what it was shown
   const used = parsed.verdict.kbUsed.filter((t) => [...ctx.kbTitles].some((k) => t.includes(k) || k.includes(t)));
   const verdict: Verdict = { ...parsed.verdict, kbUsed: (used.length ? used : [...ctx.kbTitles]).slice(0, 8) };
