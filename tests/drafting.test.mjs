@@ -405,3 +405,26 @@ test("cleaner allows policy statements, still blocks promises", () => {
   assert.equal(cleanDraft("Hi,\n\nWe can refund your order today.", false).suppressed, true);
   assert.equal(cleanDraft("Hi,\n\nWe will refund you tomorrow.", false).suppressed, true);
 });
+
+test("cleaner blocks claims of marking, escalating or passing on a request", () => {
+  for (const claim of [
+    "I've marked this urgent, and a teammate will review it.",
+    "I have escalated your request to our manager.",
+    "I'm escalating this now.",
+    "We'll pass this along to the warehouse.",
+    "I passed your message on to the team.",
+    "This has been marked as a priority.",
+    "Your request has been forwarded to our returns team.",
+    "I've forwarded this to shipping.",
+  ]) {
+    assert.equal(cleanDraft(`Hi,\n\n${claim}`, false).suppressed, true, claim);
+  }
+  for (const fine of [
+    "A teammate will review your request and reply soon.",
+    "Items marked final sale can't be returned.",
+    "The return window has passed, but store credit may still be possible.",
+    "Our team will look into it and get back to you.",
+  ]) {
+    assert.equal(cleanDraft(`Hi,\n\n${fine}`, false).suppressed, false, fine);
+  }
+});
