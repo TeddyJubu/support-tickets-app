@@ -481,7 +481,8 @@ test("drafting prompt keeps the team's voice, the customer's business and gift o
   const prompt = run.systemPrompt("token123");
   assert.match(prompt, /never mention what you can or can't see/);
   assert.match(prompt, /Never suggest buying elsewhere/);
-  assert.match(prompt, /isn't the account holder \(a gift recipient, a child, a relative or an assistant/);
+  assert.match(prompt, /Only when the writer says or makes clear they aren't the buyer/);
+  assert.match(prompt, /Someone writing about their own order is the buyer/);
   assert.match(prompt, /ask the buyer to confirm from the email on the order/);
 });
 
