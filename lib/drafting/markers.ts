@@ -69,6 +69,12 @@ function parseVerdict(raw: string): Verdict | null {
   };
 }
 
+// Template text echoed back instead of a real answer ("placeholder", "(the email to the customer)")
+const PLACEHOLDER = /^[\s"'`([{<]*(?:placeholder|tbd|todo|n\/?a|\.{3}|…|lorem ipsum|the email to the customer|email (?:body|here)|(?:your )?(?:draft|reply|response)(?: here)?)[\s"'`)\]}>.]*$/i;
+export const isPlaceholder = (text: string | null) => !!text && PLACEHOLDER.test(text.trim());
+/** A real email has a greeting and a sentence; fewer than this many letters isn't one */
+const MIN_DRAFT_LETTERS = 12;
+
 /** Pulls the draft and verdict out of the model's answer; several verdicts merge to the most cautious */
 export function extract(answer: string, token: string): Extracted {
   const m = markers(token);
@@ -88,5 +94,7 @@ export function extract(answer: string, token: string): Extracted {
   }));
   const draft = drafts.at(-1) ?? "";
   if (verdict.action === "reply" && !draft) return { ok: false, error: "The AI said it drafted a reply but sent none" };
+  if (isPlaceholder(draft) || isPlaceholder(verdict.staffNextStep)) return { ok: false, error: "The AI returned placeholder text instead of a reply" };
+  if (draft && (draft.match(/\p{L}/gu) ?? []).length < MIN_DRAFT_LETTERS) return { ok: false, error: "The AI's draft was too short to be a real reply" };
   return { ok: true, draft, verdict };
 }
