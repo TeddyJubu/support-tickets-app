@@ -481,7 +481,8 @@ test("drafting prompt keeps the team's voice, the customer's business and gift o
   const prompt = run.systemPrompt("token123");
   assert.match(prompt, /never mention what you can or can't see/);
   assert.match(prompt, /Never suggest buying elsewhere/);
-  assert.match(prompt, /gift recipient who isn't the buyer: don't agree to an exchange/);
+  assert.match(prompt, /isn't the account holder \(a gift recipient, a child, a relative or an assistant/);
+  assert.match(prompt, /ask the buyer to confirm from the email on the order/);
 });
 
 test("the sign-off is always the configured sender name", () => {
