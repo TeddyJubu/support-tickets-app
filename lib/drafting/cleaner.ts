@@ -183,3 +183,23 @@ export function cleanDraft(raw: string, sensitive: boolean): CleanResult {
 }
 
 export const findActionClaim = (text: string) => ACTION_CLAIM.exec(text)?.[0] ?? null;
+
+// The sign-off is always the configured sender name: the model sometimes invents one
+// ("Cute Little Things") or picks up another brand from the articles
+const SIGN_NAME = /\b(?:support|team|customer\s+care|things|bebe|store|shop)\b/i;
+export function fixSignOff(text: string, senderName: string) {
+  const lines = text.trimEnd().split("\n");
+  const last = lines.at(-1)!.trim();
+  const before = lines.length > 1 ? lines.at(-2)!.trim() : "";
+  // "Warmly," / "תודה על הסבלנות," with no name after it
+  if (/,$/.test(last) && last.length <= 40) return { text: `${lines.join("\n")}\n${senderName}`, changed: true };
+  const nameLine = last.length <= 50 && !/[.!?:]$/.test(last) && (/,$/.test(before) || SIGN_NAME.test(last));
+  if (nameLine) {
+    if (last === senderName) return { text: lines.join("\n"), changed: false };
+    // A two-line name block ("Cute Things Team" / "Cute Things") goes as a whole
+    let keep = lines.length - 1;
+    while (keep > 0 && lines[keep - 1].trim().length <= 50 && !/[.!?:,]$/.test(lines[keep - 1].trim()) && SIGN_NAME.test(lines[keep - 1])) keep--;
+    return { text: [...lines.slice(0, keep), senderName].join("\n"), changed: true };
+  }
+  return { text: `${lines.join("\n")}\n\n${senderName}`, changed: true };
+}

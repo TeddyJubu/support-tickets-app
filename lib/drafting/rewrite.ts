@@ -3,7 +3,7 @@
 // length; the model never sees or uses tools here.
 
 import { AiError, chatCompletion } from "../workers-ai";
-import { cleanDraft } from "./cleaner";
+import { cleanDraft, fixSignOff } from "./cleaner";
 import { neutralize } from "./markers";
 import { storeIntro, storeSettings } from "../settings";
 
@@ -33,7 +33,7 @@ export async function rewriteDraft(input: { text: string; instruction: string; s
     if (cleaned.suppressed) {
       throw new AiError(cleaned.notes.at(-1) ?? "The rewrite wasn't usable", "invalid");
     }
-    return { text: cleaned.text, notes: cleaned.notes };
+    return { text: fixSignOff(cleaned.text, storeSettings().senderName).text, notes: cleaned.notes };
   } finally {
     busy = false;
   }
