@@ -21,12 +21,13 @@ import {
   CornerDownLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatTime } from "@/lib/helpdesk-format";
 import type { AiDraftState, DraftInfo } from "@/lib/helpdesk-types";
 import { useDashboard } from "../context/dashboard-context";
 import { apiJson, jsonInit } from "../api";
 import { copyText, PRIORITY_META } from "../ui";
 
-const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "");
+const time = formatTime;
 
 function Shell({ tone = "default", children }: { tone?: "default" | "warn" | "muted"; children: React.ReactNode }) {
   return (
@@ -122,11 +123,12 @@ export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
   const job = ai?.job ?? null;
   const draft = ai?.draft ?? null;
   const working = job && ["pending", "processing", "retry_wait"].includes(job.state);
+  const [now, setNow] = useState(0);
 
   // Poll faster while the worker is on it
   useEffect(() => {
     if (!working) return;
-    const t = setInterval(() => refreshSelected(), 3000);
+    const t = setInterval(() => { refreshSelected(); setNow(Date.now()); }, 3000);
     return () => clearInterval(t);
   }, [working, refreshSelected]);
 
@@ -167,14 +169,20 @@ export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
 
   // Queuing a job supersedes the ticket's ready draft, so a working job is always the newest state
   if (working) {
+    const since = job.state === "processing" ? job.startedAt ?? job.createdAt : job.createdAt;
+    const seconds = since && now ? Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) : 0;
     return (
       <Shell tone="muted">
         <span className="inline-flex items-center gap-2">
           <Loader2 className="size-4 animate-spin text-primary" />
           {job.state === "retry_wait"
             ? `AI draft delayed (${job.error ?? "temporary error"}). Retrying at ${time(job.runAfter)}, attempt ${job.attempts + 1} of 3.`
-            : "AI is drafting a reply…"}
+            : job.state === "pending" ? "AI reply queued; waiting for the drafting worker…" : "AI is drafting a reply…"}
         </span>
+        <p className="mt-1 text-xs">
+          {seconds > 0 && `${seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`} elapsed. `}
+          {seconds >= 120 ? "This is taking longer than usual. You can write your reply now; check Overview for worker health." : "This may take a few minutes. You can keep reading or write your own reply while it runs."}
+        </p>
       </Shell>
     );
   }
@@ -316,7 +324,7 @@ export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
         {draft.body && (
           <button type="button" onClick={() => setRewriting((v) => !v)} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium ring-1 ring-border hover:bg-accent">
             <Wand2 className="size-3.5" />
-            Edit with AI
+            Rewrite this draft
           </button>
         )}
         {draft.body && (
@@ -338,7 +346,7 @@ export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
           <X className="size-3.5" />
           Dismiss
         </button>
-        <span className="ml-auto">{retryButton("New draft")}</span>
+        <span className="ml-auto">{retryButton("Generate another reply")}</span>
       </div>
       {rewriting && <RewriteBox draft={draft} onDone={() => setRewriting(false)} />}
     </Shell>

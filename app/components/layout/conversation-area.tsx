@@ -152,7 +152,11 @@ export function ConversationArea() {
           <DraftStrip key={ticketDetail.ticket.id} ai={ticketDetail.ai} />
         </div>
       )}
-      {loaded && <MessageComposer key={ticketDetail.ticket.id} />}
+      {loaded && (ticketDetail.ticket.simulated ? <MessageComposer key={ticketDetail.ticket.id} /> : (
+        <div role="note" className="border-t border-border bg-muted/40 px-6 py-4 text-sm text-muted-foreground">
+          Read-only archive. Replies and ticket changes are unavailable. This export contains ticket metadata; message text may be missing.
+        </div>
+      ))}
       <ReviewDialog />
     </div>
   );

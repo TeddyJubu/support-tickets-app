@@ -18,7 +18,7 @@ const LINKS = [
 export function AppNav({ className }: { className?: string }) {
   const path = usePathname();
   return (
-    <nav aria-label="Console" className={cn("flex items-center gap-0.5", className)}>
+    <nav aria-label="Main navigation" className={cn("flex items-center gap-1", className)}>
       {LINKS.map(({ href, label, icon: Icon }) => {
         const active = href === "/" ? path === "/" : path.startsWith(href);
         return (
@@ -29,11 +29,12 @@ export function AppNav({ className }: { className?: string }) {
             aria-label={label}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "inline-flex size-8 items-center justify-center rounded-lg transition-colors",
+              "inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg px-2.5 text-sm font-medium transition-colors sm:px-3",
               active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
             )}
           >
-            <Icon className="size-4" />
+            <Icon aria-hidden className="size-4" />
+            <span>{label}</span>
           </Link>
         );
       })}

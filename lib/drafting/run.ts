@@ -13,6 +13,7 @@ import { finishJob, failJob, type ErrorKind, type Job } from "./queue";
 import { runTool, TOOLS, type ToolContext } from "./tools";
 import { onDraftSaved } from "./hooks";
 import { storeIntro, storeSettings } from "../settings";
+import { normalizeLegacyStoreBrand } from "../kb/branding";
 import { storeAccess } from "../store";
 
 const MAX_TOOL_ROUNDS = 6;
@@ -33,6 +34,8 @@ export class DraftError extends Error {
 export function systemPrompt(token: string) {
   const m = markers(token);
   return `You draft email replies for ${storeIntro()} customer support. A person on the support team reviews every draft and decides whether to send it. You never send anything and you can't change orders, refunds, addresses or tickets.
+
+The current store name is ${storeSettings().name}. Knowledge-base examples may contain historical store names; treat those as old examples and never copy their branding into a current reply.
 
 Rules:
 - Before answering anything about policy, shipping, returns, refunds, exchanges, sizing, products or store hours, call search_kb and base the answer only on what it returns. Live notices override articles. Don't invent policy, prices, dates or stock.
@@ -210,7 +213,9 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
   const used = parsed.verdict.kbUsed.filter((t) => [...ctx.kbTitles].some((k) => t.includes(k) || k.includes(t)));
   const verdict: Verdict = { ...parsed.verdict, kbUsed: (used.length ? used : [...ctx.kbTitles]).slice(0, 8) };
   const needsStaff = verdict.action === "needs_staff" || verdict.missingFacts.length > 0 || cleaned.suppressed;
-  const signed = cleaned.suppressed ? null : fixSignOff(cleaned.text, storeSettings().senderName);
+  const normalizedDraft = cleaned.suppressed ? "" : normalizeLegacyStoreBrand(cleaned.text, storeSettings().name);
+  const brandChanged = normalizedDraft !== cleaned.text;
+  const signed = cleaned.suppressed ? null : fixSignOff(normalizedDraft, storeSettings().senderName);
 
   return saveDraft(job, {
     body: signed?.text ?? "",
@@ -220,6 +225,7 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
     verdict,
     flags: [
       ...cleaned.notes,
+      ...(brandChanged ? ["replaced historical store branding with the current store name"] : []),
       ...(signed?.changed ? ["set the sign-off to the store's sender name"] : []),
       ...(ctx.calls.some((c) => !c.ok) ? ["a lookup failed while drafting"] : []),
       // The prompt requires a KB search for policy answers; tell staff when none happened

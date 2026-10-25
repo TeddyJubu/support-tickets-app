@@ -15,17 +15,13 @@ import {
   Flag,
   RefreshCw,
   SearchX,
-  LogOut,
   AlarmClock,
 } from "lucide-react";
-import { formatRelative } from "@/lib/helpdesk-format";
+import { formatDateTime, formatRelative } from "@/lib/helpdesk-format";
 import type { TicketSummary } from "@/lib/helpdesk-types";
 import { useDashboard } from "../context/dashboard-context";
-import { useSession } from "../context/session-context";
 import { useStore } from "../context/store-context";
-import { Avatar, BrandMark, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
-import { AppNav } from "../app-nav";
-import { NotificationBell } from "../notification-bell";
+import { Avatar, IconButton, Kbd, Skeleton, STATUS_META } from "../ui";
 import { BulkBar, FilterMenu, NewTicketButton, Pager, VIEW_META, ViewPicker } from "./inbox-controls";
 import type { TicketStatus } from "../types";
 
@@ -50,23 +46,6 @@ function ThemeToggle() {
     >
       {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
     </IconButton>
-  );
-}
-
-function SignedInAs() {
-  const { user, signOut } = useSession();
-  if (!user) return null;
-  return (
-    <div className="flex items-center gap-2 border-t border-sidebar-border px-4 py-2.5">
-      <Avatar name={user.displayName} size="sm" />
-      <div className="min-w-0 flex-1 leading-tight">
-        <p className="truncate text-xs font-medium text-sidebar-foreground">{user.displayName}</p>
-        <p className="truncate text-[11px] text-muted-foreground">{user.role === "owner" ? "Owner" : "Agent"}</p>
-      </div>
-      <IconButton label="Sign out" onClick={signOut}>
-        <LogOut className="size-4" />
-      </IconButton>
-    </div>
   );
 }
 
@@ -141,20 +120,21 @@ function TicketRow({
           </span>
           <span
             className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground"
-            title={ticket.updatedAt ?? ticket.createdAt ?? undefined}
+            title={formatDateTime(ticket.updatedAt ?? ticket.createdAt)}
           >
             {formatRelative(ticket.updatedAt ?? ticket.createdAt)}
           </span>
         </div>
         <div
+          title={ticket.subject ?? "(no subject)"}
           className={cn(
-            "truncate text-[13px]",
+            "line-clamp-2 break-words text-sm leading-5",
             needsReply ? "text-sidebar-foreground/90" : "text-muted-foreground",
           )}
         >
           {ticket.subject ?? "(no subject)"}
         </div>
-        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground [&>span]:whitespace-nowrap">
           {ticket.simulated ? (
             <span className="inline-flex items-center gap-1">
               <span className={cn("size-1.5 rounded-full", STATUS_META[status].dot)} />
@@ -178,12 +158,12 @@ function TicketRow({
             </span>
           )}
           {ticket.snoozedUntil && (
-            <span className="inline-flex items-center gap-0.5" title={`Snoozed until ${new Date(ticket.snoozedUntil).toLocaleString()}`}>
+            <span className="inline-flex items-center gap-0.5" title={`Snoozed until ${formatDateTime(ticket.snoozedUntil)}`}>
               <AlarmClock className="size-3" />
             </span>
           )}
-          {ticket.tagList?.slice(0, 2).map((tag) => (
-            <span key={tag} className="max-w-16 truncate rounded bg-muted px-1 py-px text-[10px]">
+          {ticket.tagList?.filter((tag) => !/^scenario(?:\b|[:_-])/i.test(tag)).slice(0, 2).map((tag) => (
+            <span key={tag} title={tag} className="max-w-32 truncate rounded bg-muted px-1 py-px text-xs">
               {tag}
             </span>
           ))}
@@ -192,7 +172,7 @@ function TicketRow({
               <Avatar name={ticket.assignee.displayName} size="sm" className="!size-4 !text-[8px]" />
             </span>
           )}
-          <span className={cn("font-mono text-[10px] opacity-70", !ticket.assignee && "ml-auto")}>{ticket.id}</span>
+          <span className={cn("shrink-0 whitespace-nowrap font-mono text-xs", !ticket.assignee && "ml-auto")}>{ticket.id}</span>
         </div>
       </div>
     </div>
@@ -219,7 +199,7 @@ function ListSkeleton() {
   );
 }
 
-export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
+export function DemoSidebar({ onShowShortcuts, onOpenConversation }: { onShowShortcuts: () => void; onOpenConversation?: () => void }) {
   const {
     tickets,
     ticketTotal,
@@ -242,11 +222,6 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
   } = useDashboard();
   const store = useStore();
   const inbox = ticketSource === "sim";
-  // Inbox tickets live in the "sim" source; switch to it before opening one from the bell
-  const selectTicketFromBell = (id: string) => {
-    if (ticketSource !== "sim") setTicketSource("sim");
-    selectTicket(id);
-  };
   const filtered = !!(filters.priority || filters.assignee || filters.tag || filters.channel);
 
   // Keep the selected ticket in view when moving with J/K
@@ -260,23 +235,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
   const showSkeleton = ticketsLoading && tickets.length === 0;
 
   return (
-    <aside className="flex h-full w-[17rem] shrink-0 flex-col xl:w-[19rem] border-r border-sidebar-border bg-sidebar">
-      {/* Brand */}
-      <div className="flex items-center gap-3 px-4 pb-1 pt-4">
-        <BrandMark />
-        <div className="min-w-0 flex-1 leading-tight">
-          <h1 className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-            {store.name}
-          </h1>
-          <p className="text-xs text-muted-foreground">Support inbox</p>
-        </div>
-      </div>
-      <div className="flex items-center px-3 pb-2">
-        <AppNav />
-        <span className="ml-auto">
-          <NotificationBell onOpenTicket={selectTicketFromBell} />
-        </span>
-      </div>
+    <aside className="flex h-full w-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar pt-3 md:w-[22rem] xl:w-[24rem]">
 
       {/* Source */}
       <div className="px-3">
@@ -345,11 +304,11 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
             <Kbd className="group-focus-within:hidden">/</Kbd>
           )}
         </label>
-        {inbox && <NewTicketButton />}
+        {inbox && <NewTicketButton onCreated={onOpenConversation} />}
       </div>
 
       {/* View and filters (inbox only) */}
-      {inbox ? (
+      {inbox ? (<>
         <div className="flex items-center gap-1 px-2 pt-2">
           <input
             type="checkbox"
@@ -360,8 +319,9 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
             className="ml-1.5 mr-0.5 size-4 shrink-0 cursor-pointer accent-primary"
           />
           <ViewPicker />
-          <FilterMenu />
         </div>
+        <FilterMenu />
+        </>
       ) : (
         <div className="flex items-center justify-between px-4 pb-1.5 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           <span>{ticketQuery ? "Results" : "Tickets"}</span>
@@ -383,7 +343,7 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
               <TicketRow
                 ticket={ticket}
                 selected={ticket.id === selectedTicketId}
-                onSelect={() => selectTicket(ticket.id)}
+                onSelect={() => { selectTicket(ticket.id); onOpenConversation?.(); }}
                 {...(inbox
                   ? { checked: bulkSelection.has(ticket.id), onCheck: () => toggleBulk(ticket.id), selecting: bulkSelection.size > 0 }
                   : {})}
@@ -452,7 +412,6 @@ export function DemoSidebar({ onShowShortcuts }: { onShowShortcuts: () => void }
       <Pager />
 
       {/* Footer */}
-      <SignedInAs />
       <div className="flex items-center gap-1 border-t border-sidebar-border px-3 py-2">
         <button
           type="button"

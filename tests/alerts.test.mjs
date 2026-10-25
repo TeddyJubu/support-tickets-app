@@ -86,6 +86,17 @@ test("notifications: customer replies reach the assignee; assignments notify the
   simDb.addSimMessage(id, "customer", "Any update on sizing?", "Kim");
   mine = notifications.myNotifications(agent.user.id);
   assert.ok(mine.items.some((i) => i.kind === "reply" && i.ticketId === id));
+  const grouped = notifications.groupNotifications(mine.items).find((g) => g.ticketId === id);
+  assert.ok(grouped, "ticket updates are grouped together");
+  assert.ok(grouped.count >= 2, "assignment and reply updates for one ticket share a bell row");
+  assert.equal(grouped.unread, true);
+  assert.equal(grouped.items.length, grouped.count, "the group retains its full activity history");
+  assert.equal(grouped.ids.length, grouped.count, "opening the group can mark every update read");
+  const escalation = notifications.groupNotifications([
+    { id: 20, kind: "urgent", ticketId: "SIM-9001", text: "Critical: SIM-9001 Damaged item", createdAt: "2026-10-24T12:02:00Z", read: false },
+    { id: 19, kind: "urgent", ticketId: "SIM-9001", text: "High priority: SIM-9001 Damaged item", createdAt: "2026-10-24T12:00:00Z", read: true },
+  ])[0];
+  assert.match(escalation.text, /Priority increased from High to Critical: SIM-9001 Damaged item/);
   // Assigning yourself doesn't notify you
   const before = notifications.myNotifications(owner.user.id).items.length;
   triage.applyChanges([id], { assigneeId: owner.user.id }, owner.user.username, owner.user.id);
@@ -94,6 +105,52 @@ test("notifications: customer replies reach the assignee; assignments notify the
   const r = await call(notifRoute.POST, { method: "POST", headers: { cookie: agent.cookie }, body: { all: true } });
   assert.equal(r.json.unread, 0);
   assert.equal((await call(notifRoute.GET)).status, 401);
+});
+
+test("rate-limited alert retries are scheduled after the hourly window and do not bypass the cap", async () => {
+  raw.exec(`DELETE FROM alerts`);
+  process.env.ALERT_EMAIL = "owner@example.com";
+  try {
+    for (let i = 0; i < 30; i++) {
+      raw.prepare(`INSERT INTO alerts (kind, subject, body, dedupe_key, status, sent_at) VALUES ('test', ?, '', ?, 'sent', datetime('now'))`)
+        .run("Sent " + i, "rate-limit-" + i);
+    }
+    const id = ticket("I will take legal action over this refund");
+    const alertId = Number(raw.prepare(`SELECT id FROM alerts WHERE ticket_id = ?`).get(id).id);
+    let sends = 0;
+    await alerts.deliverAlerts(async () => {
+      sends++;
+      return "<should-not-send@ses>";
+    });
+    const skipped = raw.prepare(`SELECT status, last_error, next_attempt_at FROM alerts WHERE id = ?`).get(alertId);
+    assert.equal(skipped.status, "skipped");
+    assert.match(skipped.last_error, /Rate limit: 30 alert emails per hour/);
+    assert.ok(Date.parse(skipped.next_attempt_at.replace(" ", "T") + "Z") > Date.now() + 58 * 60_000);
+
+    // Older rows used this message and may still have a stale due timestamp. The API
+    // should show their current eligibility, including the active cap's next window.
+    raw.prepare(`UPDATE alerts SET last_error = 'Too many alerts this hour', next_attempt_at = datetime('now') WHERE id = ?`).run(alertId);
+    const legacy = alerts.listAlerts().alerts.find((a) => a.id === alertId);
+    assert.match(legacy.lastError, /^Rate limit:/);
+    assert.ok(Date.parse(legacy.nextAttemptAt) > Date.now() + 58 * 60_000);
+
+    const retried = await call(retryRoute.POST, { method: "POST", params: { id: String(alertId) }, headers: { cookie: owner.cookie } });
+    assert.equal(retried.status, 200);
+    assert.equal(retried.json.rateLimited, true);
+    assert.ok(retried.json.nextAttemptAt);
+    assert.equal(raw.prepare(`SELECT status FROM alerts WHERE id = ?`).get(alertId).status, "pending");
+    raw.prepare(`UPDATE alerts SET next_attempt_at = datetime('now') WHERE id = ?`).run(alertId);
+    await alerts.deliverAlerts(async () => {
+      sends++;
+      return "<must-not-send@ses>";
+    });
+    assert.equal(sends, 0, "the cap is checked again before sending even if a queued retry is due");
+    assert.equal(raw.prepare(`SELECT status FROM alerts WHERE id = ?`).get(alertId).status, "skipped");
+  } finally {
+    // Prevent the synthetic 30/hour cap from leaking into later tests.
+    raw.exec(`DELETE FROM alerts`);
+    delete process.env.ALERT_EMAIL;
+  }
 });
 
 test("heartbeat check: one alert when the worker stops, one when it's back", () => {

@@ -43,7 +43,7 @@ export function SendAccessSwitch() {
       )}
     >
       {busy ? <Loader2 className="size-3.5 animate-spin" /> : on ? <LockOpen className="size-3.5" /> : <Lock className="size-3.5" />}
-      {on ? `Read & write · ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, "0")}` : "Read-only"}
+      {on ? `Sending enabled · ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, "0")} left · this page` : "Enable sending for 30 minutes"}
     </button>
   );
 }
@@ -56,7 +56,7 @@ const RECOVERY: Record<string, string> = {
   no_review: "Close this and review the reply again.",
   pending_send: "Close this and check the earlier reply's status above the reply box.",
   uncertain: "Don't send it again yet. Check the status above the reply box once this closes.",
-  read_only: "Turn on Read & write, then review again.",
+  read_only: "Enable sending for 30 minutes, then review again.",
 };
 
 export function ReviewDialog() {

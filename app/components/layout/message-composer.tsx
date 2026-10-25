@@ -2,13 +2,10 @@
 
 import { cn } from "@/lib/utils";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useCopilot } from "@yourgpt/copilot-sdk/react";
 import {
   Send,
-  Sparkles,
   Loader2,
   Mail,
-  Info,
   CheckCircle2,
   AlertTriangle,
   X,
@@ -23,11 +20,9 @@ export function MessageComposer() {
     composeText,
     setComposeText,
     sendAgentMessage,
-    setTicketStatus,
     ticketDetail,
     ticketStatus,
     sending,
-    setSidePanel,
     addNote,
     sendAccessUntil,
   } = useDashboard();
@@ -35,7 +30,6 @@ export function MessageComposer() {
   const [mode, setMode] = useState<"reply" | "note">("reply");
   // A note has its own text (per ticket), so switching tabs never sends a note as a reply
   const [note, setNote] = useState({ ticketId: "", text: "" });
-  const { sendMessage, isLoading: copilotBusy } = useCopilot();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const ticket = ticketDetail?.ticket;
@@ -72,7 +66,7 @@ export function MessageComposer() {
   }, [composeText]);
 
   const send = async (thenClose = false) => {
-    if (!canSend || !ticket) return;
+    if (!canSend || !ticket || archived) return;
     if (mode === "note") {
       const id = ticket.id;
       if (await addNote(noteText)) setNote((n) => (n.ticketId === id ? { ticketId: id, text: "" } : n));
@@ -83,25 +77,15 @@ export function MessageComposer() {
       await sendAgentMessage(composeText, "Email", undefined, thenClose);
       return;
     }
-    const id = ticket.id;
-    const ok = await sendAgentMessage(
-      composeText,
-      "Email",
-      ticket.subject ? `Re: ${ticket.subject}` : undefined,
-    );
-    if (ok && thenClose) await setTicketStatus("closed", id);
   };
 
-  const draftWithAi = () => {
-    setSidePanel("copilot");
-    sendMessage("Draft a response to the customer");
-  };
+  if (archived) return null;
 
   return (
     <div className="border-t border-border bg-background px-6 pb-4 pt-3">
       <div className="mx-auto w-full max-w-3xl">
         {!archived && (
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <div
               className="inline-flex rounded-lg bg-muted p-0.5 text-xs"
               role="tablist"
@@ -140,6 +124,15 @@ export function MessageComposer() {
         )}
 
         {!archived && mode === "reply" && <PendingSendBanner />}
+        {mode === "reply" && (
+          <p id="sending-help" className="mb-2 text-xs text-muted-foreground">
+            {ticketDetail?.pendingSend
+              ? "Sending is blocked until you confirm the earlier reply's delivery above. You can still edit this draft."
+              : !sendAccessUntil
+                ? "You can write a draft. To review and send, enable sending for 30 minutes on this page. Reloading turns sending off."
+                : "Sending is enabled temporarily for this page. Every reply still requires review and confirmation."}
+          </p>
+        )}
 
         {/* Who this goes to */}
         {mode === "note" ? (
@@ -166,11 +159,6 @@ export function MessageComposer() {
               <span className="inline-flex items-center gap-1 rounded-full bg-warning/12 px-2 py-0.5 font-medium text-warning">
                 <AlertTriangle className="size-3" />
                 Sends a real email
-              </span>
-            ) : archived ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
-                <Info className="size-3" />
-                Archived ticket: replies stay in this view and aren&apos;t sent
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 rounded-full bg-chart-5/10 px-2 py-0.5 text-chart-5">
@@ -209,23 +197,11 @@ export function MessageComposer() {
                 : `Write a reply to ${recipientName.split(" ")[0]}…`
             }
             aria-label={mode === "note" ? "Internal note" : "Reply"}
+            aria-describedby={mode === "reply" ? "sending-help" : undefined}
             rows={3}
             className="block max-h-[40vh] min-h-[4.5rem] w-full resize-none bg-transparent px-4 pt-3 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-2 px-2 pb-2 pt-1">
-            <button
-              type="button"
-              onClick={draftWithAi}
-              disabled={copilotBusy}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-primary transition-colors hover:bg-accent disabled:opacity-50"
-            >
-              {copilotBusy ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="size-3.5" />
-              )}
-              Draft with AI
-            </button>
             {text && !sending && (
               <button
                 type="button"
@@ -243,7 +219,7 @@ export function MessageComposer() {
             <span className="ml-auto hidden items-center gap-1 text-[11px] text-muted-foreground md:inline-flex">
               <Kbd>{modKey()}</Kbd>
               <Kbd>↵</Kbd>
-              to send
+              {mode === "note" ? "to add note" : "to review"}
             </span>
 
             {!archived && mode === "reply" && ticketStatus !== "closed" && (
@@ -255,7 +231,7 @@ export function MessageComposer() {
                 className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-foreground ring-1 ring-border transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
               >
                 <CheckCircle2 className="size-4" />
-                <span className="hidden lg:inline">Send &amp; close</span>
+                <span className="sr-only lg:not-sr-only">Send &amp; close</span>
               </button>
             )}
             <button

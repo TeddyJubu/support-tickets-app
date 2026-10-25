@@ -6,12 +6,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Package, Truck, RotateCcw, RefreshCw, AlertTriangle, ArrowRightLeft, CreditCard, Gift } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/helpdesk-format";
 import type { RailOrder, RailResponse } from "@/lib/store";
 import { apiJson } from "../api";
 
 const money = (v: number | null, currency?: string | null) =>
   v == null ? "unavailable" : v.toLocaleString(undefined, { style: "currency", currency: currency || "USD" });
-const date = (v: string | null) => (v ? new Date(v.includes("T") ? v : `${v.replace(" ", "T")}Z`).toLocaleDateString() : "unavailable");
+const date = (v: string | null) => (v ? formatDate(v) : "unavailable");
 const RETURN_LABEL: Record<string, string> = {
   requested: "Requested",
   label_sent: "Label sent",
@@ -129,8 +130,8 @@ export function StoreRail({ ticketId }: { ticketId: string }) {
               {rail.stale && <AlertTriangle className="size-3.5" />}
               <span>
                 {rail.stale
-                  ? `Refresh delayed: showing the last successful read (${rail.fetchedAt ? new Date(rail.fetchedAt).toLocaleTimeString() : "earlier"})`
-                  : `Read from the store ${rail.fetchedAt ? new Date(rail.fetchedAt).toLocaleTimeString() : ""}`}
+                  ? `Refresh delayed: showing the last successful read (${rail.fetchedAt ? formatDateTime(rail.fetchedAt) : "earlier"})`
+                  : `Read from the store ${rail.fetchedAt ? formatDateTime(rail.fetchedAt) : ""}`}
               </span>
               <button
                 type="button"
@@ -147,6 +148,18 @@ export function StoreRail({ ticketId }: { ticketId: string }) {
                 <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
               </button>
             </div>
+            {snap?.customer && (
+              <dl className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg bg-muted/60 px-3 py-2">
+                  <dt className="text-muted-foreground">Orders</dt>
+                  <dd className="mt-0.5 font-medium">{snap.customer.ordersCount ?? "Unavailable"}</dd>
+                </div>
+                <div className="rounded-lg bg-muted/60 px-3 py-2">
+                  <dt className="text-muted-foreground">Lifetime spend</dt>
+                  <dd className="mt-0.5 font-medium">{money(snap.customer.totalSpent, snap.matchedOrder?.currency ?? snap.orders[0]?.currency)}</dd>
+                </div>
+              </dl>
+            )}
             {snap?.matchedOrder ? (
               <OrderCard order={snap.matchedOrder} matched />
             ) : (

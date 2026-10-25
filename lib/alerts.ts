@@ -34,6 +34,7 @@ export interface AlertRow {
   lastError: string | null;
   createdAt: string;
   sentAt: string | null;
+  nextAttemptAt: string | null;
 }
 
 const toAlert = (r: Row): AlertRow => ({
@@ -48,13 +49,36 @@ const toAlert = (r: Row): AlertRow => ({
   lastError: r.last_error == null ? null : String(r.last_error),
   createdAt: iso(r.created_at)!,
   sentAt: iso(r.sent_at),
+  nextAttemptAt: iso(r.next_attempt_at),
 });
+
+function alertRateLimit(d: ReturnType<typeof getDb>) {
+  const sent = Number((d.prepare(`SELECT count(*) AS c FROM alerts WHERE status = 'sent' AND sent_at > datetime('now', '-1 hour')`).get() as Row).c);
+  if (sent < MAX_PER_HOUR) return { rateLimited: false, nextAttemptAt: null as string | null };
+  // Leave one minute after the first send expires to account for SQLite's second precision
+  // and the worker's once-a-minute cadence. deliverAlerts still checks the limit before send.
+  const next = d.prepare(
+    `SELECT datetime(min(sent_at), '+61 minutes') AS next_attempt_at
+     FROM alerts WHERE status = 'sent' AND sent_at > datetime('now', '-1 hour')`,
+  ).get() as Row;
+  return { rateLimited: true, nextAttemptAt: next.next_attempt_at == null ? null : String(next.next_attempt_at) };
+}
 
 export function listAlerts(offset = 0, limit = 25) {
   const d = getDb();
   const total = Number((d.prepare(`SELECT count(*) AS c FROM alerts`).get() as Row).c);
   const rows = d.prepare(`SELECT * FROM alerts ORDER BY id DESC LIMIT ? OFFSET ?`).all(limit, offset) as Row[];
-  return { alerts: rows.map(toAlert), total, offset, limit, recipients: alertRecipients().length };
+  const rateLimit = alertRateLimit(d);
+  const alerts = rows.map((row) => {
+    const alert = toAlert(row);
+    if (alert.status !== "skipped" || alert.lastError !== "Too many alerts this hour") return alert;
+    return {
+      ...alert,
+      lastError: "Rate limit: 30 alert emails per hour. Retry only after the time shown; the cap is checked before sending.",
+      nextAttemptAt: rateLimit.rateLimited && rateLimit.nextAttemptAt ? iso(rateLimit.nextAttemptAt) : new Date().toISOString(),
+    };
+  });
+  return { alerts, total, offset, limit, recipients: alertRecipients().length };
 }
 
 /** Sends due alerts. Returns counts; never throws. */
@@ -77,9 +101,13 @@ export async function deliverAlerts(send: typeof sendEmail = sendEmail) {
       result.skipped++;
       continue;
     }
-    const lastHour = Number((d.prepare(`SELECT count(*) AS c FROM alerts WHERE status = 'sent' AND sent_at > datetime('now', '-1 hour')`).get() as Row).c);
-    if (lastHour >= MAX_PER_HOUR) {
-      d.prepare(`UPDATE alerts SET status = 'skipped', last_error = 'Too many alerts this hour' WHERE id = ?`).run(id);
+    const rateLimit = alertRateLimit(d);
+    if (rateLimit.rateLimited) {
+      d.prepare(`UPDATE alerts SET status = 'skipped', last_error = ?, next_attempt_at = ? WHERE id = ?`).run(
+        "Rate limit: 30 alert emails per hour. Retry after the time shown; the cap is checked again before sending.",
+        rateLimit.nextAttemptAt,
+        id,
+      );
       result.skipped++;
       continue;
     }
@@ -102,13 +130,19 @@ export async function deliverAlerts(send: typeof sendEmail = sendEmail) {
   return result;
 }
 
-/** Staff retry a failed or skipped alert */
+/** Staff retry a failed or skipped alert without bypassing the hourly delivery cap. */
 export function retryAlert(id: number, actor: string) {
-  const res = getDb()
-    .prepare(`UPDATE alerts SET status = 'pending', next_attempt_at = datetime('now'), last_error = NULL WHERE id = ? AND status IN ('failed', 'skipped')`)
-    .run(id);
-  if (res.changes) audit(actor, "alert_retry", null, { alertId: id });
-  return res.changes > 0;
+  const d = getDb();
+  const limit = alertRateLimit(d);
+  const nextAttemptAt = limit.rateLimited ? limit.nextAttemptAt : null;
+  const error = limit.rateLimited
+    ? "Rate limit: 30 alert emails per hour. Retry scheduled after the time shown; the cap is checked again before sending."
+    : null;
+  const res = d
+    .prepare(`UPDATE alerts SET status = 'pending', next_attempt_at = COALESCE(?, datetime('now')), last_error = ? WHERE id = ? AND status IN ('failed', 'skipped')`)
+    .run(nextAttemptAt, error, id);
+  if (res.changes) audit(actor, "alert_retry", null, { alertId: id, rateLimited: limit.rateLimited, nextAttemptAt: nextAttemptAt ? iso(nextAttemptAt) : null });
+  return res.changes ? { ok: true as const, rateLimited: limit.rateLimited, nextAttemptAt: nextAttemptAt ? iso(nextAttemptAt) : null } : { ok: false as const };
 }
 
 export function sendTestAlert(actor: string) {

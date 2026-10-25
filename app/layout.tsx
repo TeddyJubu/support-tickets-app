@@ -17,7 +17,10 @@ const geistMono = Geist_Mono({
 export function generateMetadata(): Metadata {
   const { name } = storeSettings();
   return {
-    title: `${name} · Support`,
+    title: {
+      default: `${name} · Support`,
+      template: `%s · ${name} Support`,
+    },
     description: `${name} support inbox with an AI copilot`,
     // Contains customer data: keep it out of search engines
     robots: {

@@ -15,6 +15,7 @@ const { cleanDraft, fixSignOff } = await importApp("lib/drafting/cleaner.ts");
 const markersMod = await importApp("lib/drafting/markers.ts");
 const queue = await importApp("lib/drafting/queue.ts");
 const run = await importApp("lib/drafting/run.ts");
+const { toDraft } = await importApp("lib/drafting/state.ts");
 const simDb = await importApp("lib/sim-db.ts");
 const ai = await importApp("lib/workers-ai.ts");
 const kbIndex = await importApp("lib/kb/index.ts");
@@ -338,10 +339,12 @@ test("rewrite returns cleaned text and refuses promises", async () => {
   const { detail } = await draftOne("Rewrite test: how long is shipping", (t) => wrap(t, "Hi,\n\nShips in 2 days."));
   const id = String(detail.ai.draft.id);
   fakeAi(() => "Hi Maya!\n\nGood news: orders ship within two days.\n\nButtons Bebe Support");
-  ai.setAiFetch(async () => Response.json({ choices: [{ message: { role: "assistant", content: "Hi Maya!\n\nOrders ship within two days.\n\nButtons Bebe Support" } }] }));
+  ai.setAiFetch(async () => Response.json({ choices: [{ message: { role: "assistant", content: "Hi Maya!\n\nButtons Bebe orders ship within two days.\n\nButtons Bebe Support" } }] }));
   const ok = await call(rewriteRoute.POST, { method: "POST", params: { id }, headers: { cookie: staff.cookie }, body: { instruction: "warmer" } });
   assert.equal(ok.status, 200, ok.text);
   assert.match(ok.json.text, /two days/);
+  assert.match(ok.json.text, /Cute Things orders ship/);
+  assert.doesNotMatch(ok.json.text, /Buttons Bebe/);
   ai.setAiFetch(async () => Response.json({ choices: [{ message: { role: "assistant", content: "Hi,\n\nI've refunded you." } }] }));
   const bad = await call(rewriteRoute.POST, { method: "POST", params: { id }, headers: { cookie: staff.cookie }, body: { instruction: "say we refunded" } });
   assert.equal(bad.status, 502);
@@ -517,6 +520,21 @@ test("a draft with an invented sign-off is saved with the store's", async () => 
   assert.match(detail.ai.draft.body, /Warmly,\n.+ Support$/);
   assert.doesNotMatch(detail.ai.draft.body, /Buttons Bebe Team/);
   assert.ok(detail.ai.draft.flags.includes("set the sign-off to the store's sender name"));
+});
+
+test("a current reply replaces legacy knowledge-base store branding", async () => {
+  const { detail } = await draftOne("How long does shipping take?", (t) =>
+    wrap(t, "Hi Maya,\n\nButtons Bebe orders ship within 24 to 48 hours.\n\nCute Things Support"),
+  );
+  assert.match(detail.ai.draft.body, /Cute Things orders ship/);
+  assert.doesNotMatch(detail.ai.draft.body, /Buttons Bebe/);
+  assert.ok(detail.ai.draft.flags.includes("replaced historical store branding with the current store name"));
+});
+
+test("previously saved drafts display the current brand without rewriting source records", () => {
+  const row = { id: 1, body: "Welcome to Buttons Bebe.", created_at: "2026-10-24 12:00:00", state: "ready", action: "reply", severity: "normal" };
+  assert.equal(toDraft(row).body, "Welcome to Cute Things.");
+  assert.equal(row.body, "Welcome to Buttons Bebe.");
 });
 
 test("cleaner holds back talk about the ticket or the AI's own access", () => {

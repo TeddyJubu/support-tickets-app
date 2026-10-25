@@ -20,6 +20,7 @@ export interface SessionUser extends StaffMember {
 interface SessionContextType {
   user: SessionUser | null;
   staff: StaffMember[];
+  setDisplayName: (displayName: string) => void;
   signOut: () => Promise<void>;
 }
 
@@ -80,8 +81,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     window.location.assign("/login");
   }, []);
 
+  const setDisplayName = useCallback((displayName: string) => {
+    setUser((current) => (current ? { ...current, displayName } : current));
+    setStaff((current) => current.map((member) => (member.id === user?.id ? { ...member, displayName } : member)));
+  }, [user?.id]);
+
   return (
-    <SessionContext.Provider value={{ user, staff, signOut }}>
+    <SessionContext.Provider value={{ user, staff, setDisplayName, signOut }}>
       {children}
       {expired && <SignInAgain />}
     </SessionContext.Provider>

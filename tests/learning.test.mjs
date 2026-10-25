@@ -69,6 +69,8 @@ test("only the owner approves; approved lessons are promoted as masked KB exampl
   const lesson = learning.listLessons("pending").find((l) => l.ticketId === id);
   assert.equal((await call(decideRoute.POST, { method: "POST", params: { id: String(lesson.id) }, headers: { cookie: agent.cookie }, body: { decision: "approved" } })).status, 403);
   assert.equal((await call(decideRoute.POST, { method: "POST", params: { id: String(lesson.id) }, headers: { cookie: owner.cookie }, body: { decision: "approved" } })).status, 200);
+  assert.equal((await call(decideRoute.POST, { method: "POST", params: { id: String(lesson.id) }, headers: { cookie: owner.cookie }, body: { decision: "rejected" } })).status, 200, "decision can be reversed before promotion");
+  assert.equal((await call(decideRoute.POST, { method: "POST", params: { id: String(lesson.id) }, headers: { cookie: owner.cookie }, body: { decision: "approved" } })).status, 200, "the original approval can be restored before promotion");
   const rejected = learning.listLessons("pending")[0];
   learning.reviewLesson(rejected.id, "rejected", "owner");
 

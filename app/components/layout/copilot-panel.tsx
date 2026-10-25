@@ -1,6 +1,7 @@
 "use client";
 
-import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
+import { CopilotChat, useCopilotChatContext } from "@yourgpt/copilot-sdk/ui";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Sparkles, UserRound, X, MapPin, Mail, Phone, Shield, Link2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -61,7 +62,7 @@ function CustomerDetails() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate font-semibold text-foreground">{name}</p>
-            {customer && (
+            {customer && !ticket.simulated && (
               <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", TIER_TONE[tier] ?? "bg-muted text-muted-foreground")}>
                 {tier}
               </span>
@@ -101,13 +102,14 @@ function CustomerDetails() {
 
       <Section title="At a glance">
         <div className="grid grid-cols-2 gap-2">
-          <Stat label="Lifetime spend" value={customer ? formatMoney(customer.totalSpent) : "—"} />
-          <Stat label="Orders" value={customer?.totalOrders ?? "—"} />
+          {!ticket.simulated && <Stat label="Lifetime spend" value={customer ? formatMoney(customer.totalSpent) : "Unavailable"} />}
+          {!ticket.simulated && <Stat label="Orders" value={customer?.totalOrders ?? "Unavailable"} />}
           <Stat label="Tickets" value={stats.ticketCount} />
           <Stat label="Last 90 days" value={stats.ticketsLast90Days} />
           <Stat label="Avg. first reply" value={formatDuration(stats.avgFirstResponseSeconds)} />
           <Stat label="Avg. resolution" value={formatDuration(stats.avgResolutionSeconds)} />
         </div>
+        {ticket.simulated && <p className="mt-3 text-sm text-muted-foreground">{ticket.channel === "simulator" ? "Store orders and lifetime spend are unavailable for simulated customers." : "Store orders and lifetime spend appear in the verified store lookup below when available."}</p>}
         {customer?.note && <p className="mt-3 text-xs text-muted-foreground">{customer.note}</p>}
       </Section>
 
@@ -205,15 +207,65 @@ function CustomerDetails() {
 
 // Tool cards (including loading skeletons and approval steps) are rendered by
 // each tool's `render` in ticketing-tools.tsx.
+const panelMedia = "(max-width: 1439px)";
+const subscribePanelMedia = (callback: () => void) => {
+  const media = window.matchMedia(panelMedia);
+  media.addEventListener("change", callback);
+  return () => media.removeEventListener("change", callback);
+};
+const compactPanel = () => window.matchMedia(panelMedia).matches;
+
 export function CopilotPanel() {
-  const { sidePanel, setSidePanel } = useDashboard();
+  const { sidePanel, setSidePanel, selectedTicketId, ticketDetail } = useDashboard();
+  const activeTicket = ticketDetail?.ticket.id === selectedTicketId ? ticketDetail.ticket : null;
+  const narrow = useSyncExternalStore(subscribePanelMedia, compactPanel, () => false);
+  const modal = narrow && !!sidePanel;
+  const panelRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!modal) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length);
+    const first = () => focusable()[0];
+    first()?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setSidePanel(null);
+      } else if (event.key === "Tab") {
+        const elements = focusable();
+        const target = event.shiftKey ? elements.at(-1) : elements[0];
+        const boundary = event.shiftKey ? elements[0] : elements.at(-1);
+        if (document.activeElement === boundary || !panelRef.current?.contains(document.activeElement)) {
+          event.preventDefault();
+          target?.focus();
+        }
+      }
+    };
+    const onFocus = (event: FocusEvent) => {
+      if (!panelRef.current?.contains(event.target as Node)) first()?.focus();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", onFocus);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", onFocus);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [modal, setSidePanel]);
 
   return (
+    <>
+    {modal && <div aria-hidden="true" className="fixed inset-0 z-[70] bg-background/60 backdrop-blur-sm" onMouseDown={() => setSidePanel(null)} />}
     <aside
+      ref={panelRef}
+      role={modal ? "dialog" : undefined}
+      aria-modal={modal || undefined}
       aria-label="Ticket side panel"
       className={cn(
-        "flex w-[400px] shrink-0 flex-col border-l border-border bg-sidebar xl:w-[420px]",
-        "max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:z-30 max-xl:shadow-pop",
+        "flex w-[22rem] max-w-full shrink-0 flex-col border-l border-border bg-sidebar 2xl:w-[24rem]",
+        "max-[1439px]:fixed max-[1439px]:inset-y-0 max-[1439px]:right-0 max-[1439px]:z-[80] max-[1439px]:w-[min(24rem,100vw)] max-[1439px]:shadow-pop",
         !sidePanel && "hidden",
       )}
     >
@@ -250,27 +302,64 @@ export function CopilotPanel() {
 
       {/* Kept mounted so a running copilot answer isn't interrupted */}
       <div className={cn("min-h-0 flex-1 flex-col", sidePanel === "copilot" ? "flex" : "hidden")}>
+        <p className="border-b border-border px-4 py-2 text-xs text-muted-foreground" role="status">
+          {activeTicket ? `Current ticket: ${activeTicket.id} · ${activeTicket.subject ?? "No subject"}` : "Open a ticket to ask about its conversation."}
+          {activeTicket?.simulated && " Use the AI draft below the conversation for suggested replies. Copilot helps investigate questions."}
+        </p>
         <CopilotChat
           placeholder="Ask about this ticket, customer, products…"
           className="h-full"
           persistence={true}
-          showThreadPicker={true}
+          showThreadPicker={false}
+          renderInput={() => <CopilotInput key={activeTicket?.id ?? "none"} disabled={!activeTicket} />}
           showPoweredBy={false}
           header={{ name: "Support copilot" }}
-          welcome={{
-            title: "How can I help with this ticket?",
-            subtitle: "I can read the ticket, look up the customer and their orders, and draft a reply.",
-            suggestionsLabel: "Try asking",
-          }}
+          welcome={false}
           suggestions={[
             "Summarize this ticket",
             "Who is this customer and how valuable are they?",
             "Find similar tickets",
-            "Draft a response to the customer",
+            "Which policies apply to this ticket?",
           ]}
-        />
+        >
+          <CopilotChat.Home className="flex min-h-0 flex-1 flex-col">
+            <div className="flex-1 overflow-y-auto px-4 py-6">
+              <h2 className="font-semibold">Investigate this ticket</h2>
+              <p className="mt-2 text-sm text-muted-foreground">Ask about the conversation, current policies, or verified customer details. Use the AI draft in the conversation to prepare a reply.</p>
+            </div>
+            <CopilotInput key={activeTicket?.id ?? "none"} disabled={!activeTicket} />
+          </CopilotChat.Home>
+          <CopilotChat.ChatView />
+        </CopilotChat>
       </div>
       {sidePanel === "customer" && <CustomerDetails />}
     </aside>
+    </>
+  );
+}
+
+function CopilotInput({ disabled }: { disabled: boolean }) {
+  const { send: sendMessage, isLoading, onStop } = useCopilotChatContext();
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (disabled || isLoading || !text.trim()) return;
+    const prompt = text.trim();
+    setError(null);
+    setText("");
+    try { await sendMessage(prompt); }
+    catch { setText(prompt); setError("Couldn't ask the copilot. Try again."); }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-2 border-t border-border p-3">
+      <label htmlFor="copilot-question" className="block text-xs font-medium">Ask the copilot about this ticket</label>
+      <textarea id="copilot-question" value={text} onChange={(e) => setText(e.target.value)} disabled={disabled || isLoading} rows={2}
+        placeholder={disabled ? "Open a ticket first" : "Ask about this ticket, customer, products…"}
+        className="w-full resize-y rounded-lg border border-input bg-background p-2 text-sm outline-none focus:border-ring disabled:opacity-60" />
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+      <button type="submit" disabled={disabled || isLoading || !text.trim()} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50">{isLoading ? "Copilot is thinking…" : "Ask copilot"}</button>
+      {isLoading && onStop && <button type="button" onClick={onStop} className="ml-2 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 ring-border hover:bg-accent">Stop copilot</button>}
+    </form>
   );
 }

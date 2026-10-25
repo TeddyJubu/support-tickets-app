@@ -15,7 +15,7 @@ process.env.SHOPIFY_CLIENT_SECRET = SECRET;
 process.env.HELPDESK_PUBLIC_URL = "https://help.example.test";
 
 // Fake Shopify: the OAuth token endpoint (code exchange, refresh) and the Admin GraphQL API
-const fake = { n: 0, code: "good-code", scope: "read_customers,read_orders", access: null, refresh: null, refreshes: 0, uninstalls: [], requests: [] };
+const fake = { n: 0, code: "good-code", scope: "read_customers,read_orders", access: null, refresh: null, refreshes: 0, uninstalls: [], requests: [], queries: [] };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 function issue() {
   fake.n++;
@@ -41,6 +41,7 @@ globalThis.fetch = async (input, init = {}) => {
   if (url.pathname !== "/admin/api/2026-10/graphql.json") return json({ errors: "Not Found" }, 404);
   if (init.headers?.["x-shopify-access-token"] !== fake.access) return json({ errors: "[API] Invalid API key or access token" }, 401);
   const { query } = JSON.parse(init.body);
+  fake.queries.push(query);
   if (/appUninstall/.test(query)) {
     fake.uninstalls.push(fake.access);
     return json({ data: { appUninstall: { app: { id: "gid://shopify/App/1" }, userErrors: [] } } });
@@ -196,6 +197,22 @@ test("connecting saves encrypted keys, clears cached store data and is audited",
   assert.equal(storeAccess(t.ticketId).ok, true);
   assert.deepEqual(await shopifyQuery(config, `query ShopName { shop { name } }`), { shop: { name: "Buyer Store" } });
   await assert.rejects(shopifyQuery(config, `mutation { appUninstall { app { id } } }`), /Only read queries/);
+});
+
+test("Settings connection check reads shop metadata only and records its last success", async () => {
+  await connect();
+  const queryCount = fake.queries.length;
+  const checked = await call(statusRoute.POST, { method: "POST", headers: { cookie: owner.cookie } });
+  assert.equal(checked.status, 200, checked.text);
+  assert.equal(checked.json.ok, true);
+  assert.equal(checked.json.shop, SHOP);
+  assert.equal(checked.json.shopName, "Buyer Store");
+  const query = fake.queries.slice(queryCount).join("\n");
+  assert.match(query, /shop\s*\{\s*name\s*\}/);
+  assert.doesNotMatch(query, /customers|orders/i);
+  const status = await call(statusRoute.GET, { headers: { cookie: owner.cookie } });
+  assert.ok(status.json.lastSuccessfulCheckAt);
+  assert.equal((await call(statusRoute.POST)).status, 401);
 });
 
 test("an expired key is refreshed once, even with several callers, and the refresh key rotates", async () => {

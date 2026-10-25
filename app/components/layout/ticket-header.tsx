@@ -167,7 +167,7 @@ export function TicketHeader() {
 
   return (
     <header className="relative z-20 border-b border-border bg-background">
-      <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 sm:flex-nowrap">
         {/* Prev / next */}
         <div className="flex shrink-0 flex-col items-center rounded-lg ring-1 ring-border">
           <button
@@ -239,7 +239,7 @@ export function TicketHeader() {
         </div>
 
         {/* Actions */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-start">
           {ticket && (editable ? <StatusMenu disabled={detailLoading} /> : (
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground"
@@ -268,11 +268,12 @@ export function TicketHeader() {
               onClick={() => setTicketStatus(ticketStatus === "closed" ? "open" : "closed", ticket?.id)}
               disabled={detailLoading}
               title={ticketStatus === "closed" ? "Reopen ticket" : "Close ticket (E)"}
+              aria-label={ticketStatus === "closed" ? "Reopen ticket" : "Close ticket (E)"}
               className={cn(
                 "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-medium shadow-soft transition-all active:scale-[0.98] disabled:opacity-50",
                 ticketStatus === "closed"
                   ? "bg-background text-foreground ring-1 ring-border hover:bg-accent"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90",
+                  : "bg-background text-foreground ring-1 ring-border hover:bg-accent",
               )}
             >
               {ticketStatus === "closed" ? (
@@ -283,8 +284,8 @@ export function TicketHeader() {
               ) : (
                 <>
                   <CheckCircle2 className="size-4" />
-                  Close ticket
-                  <Kbd className="ml-0.5 border-primary-foreground/25 bg-primary-foreground/15 text-primary-foreground">E</Kbd>
+                  <span className="sm:hidden">Close</span><span className="hidden sm:inline">Close ticket</span>
+                  <Kbd className="ml-0.5 hidden sm:inline-flex">E</Kbd>
                 </>
               )}
             </button>

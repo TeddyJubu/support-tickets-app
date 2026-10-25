@@ -9,6 +9,7 @@ import { test } from "node:test";
 
 const kbDir = process.env.HELPDESK_KB_DIR;
 const files = await importApp("lib/kb/files.ts");
+const articleNames = await importApp("lib/kb/article-name.ts");
 const index = await importApp("lib/kb/index.ts");
 const search = await importApp("lib/kb/search.ts");
 const notices = await importApp("lib/kb/notices.ts");
@@ -43,7 +44,7 @@ Returns are accepted within 14 days of delivery for store credit.
 Final sale items can't be returned.
 `,
 );
-put("faq/shipping.md", `---\ntitle: Shipping times\ntags: [shipping]\n---\n\n## Processing\n\nOrders ship in 24 to 48 hours.\n`);
+put("faq/shipping.md", `---\ntitle: 'Buttons Bebe shipping times'\ntags: [shipping]\n---\n\n## Processing\n\nButtons Bebe orders ship in 24 to 48 hours.\n`);
 put("intents/README.md", "not indexed");
 
 test("front matter, tag normalization, sensitivity and chunks", () => {
@@ -53,8 +54,21 @@ test("front matter, tag normalization, sensitivity and chunks", () => {
   assert.equal(a.sensitive, true, "refund-window marks it sensitive");
   const chunks = files.chunkArticle(a);
   assert.deepEqual(chunks.map((c) => c.heading), ["How long customers have", "Final sale"]);
-  assert.equal(files.readArticle("faq/shipping.md").sensitive, false);
+  const shipping = files.readArticle("faq/shipping.md");
+  assert.equal(shipping.sensitive, false);
+  assert.equal(shipping.title, "Cute Things shipping times");
+  assert.match(shipping.body, /Cute Things orders ship/);
+  assert.doesNotMatch(shipping.raw, /Buttons Bebe/);
+  const quoted = files.parseArticle("faq/quoted.md", "---\ntitle: 'A kid''s return policy'\n---\n\nText\n");
+  assert.equal(quoted.title, "A kid's return policy");
   assert.ok(!files.listArticles().some((x) => x.path.endsWith("README.md")));
+});
+
+test("article titles generate short, safe Markdown filenames", () => {
+  assert.equal(articleNames.articleFilenameFromTitle("  Return & Exchange: Café / Kids!  "), "return-exchange-cafe-kids.md");
+  assert.equal(articleNames.articleFilenameFromTitle("!!!"), null);
+  const file = articleNames.articleFilenameFromTitle("A ".repeat(100));
+  assert.match(file, /^[a-z0-9][a-z0-9-]{0,99}\.md$/);
 });
 
 test("paths outside the KB folders are refused", () => {
@@ -83,6 +97,20 @@ test("keyword-only index builds without Workers AI and finds articles", async ()
   assert.equal(out.mode, "keyword");
   assert.equal(out.results[0].path, "policies/returns.md");
   assert.equal(out.results[0].sensitive, true);
+  const shipping = await search.searchKb("shipping times");
+  assert.equal(shipping.results[0].title, "Cute Things shipping times");
+  assert.match(shipping.results[0].text, /Cute Things orders/);
+  assert.doesNotMatch(JSON.stringify(shipping.results), /Buttons Bebe/);
+
+  // Normalize the result from a previously built index too, before a re-index runs.
+  const built = new DatabaseSync(index.kbDbPath());
+  built.prepare(`UPDATE docs SET title = ? WHERE path = ?`).run("Buttons Bebe shipping times", "faq/shipping.md");
+  built.prepare(`UPDATE chunks SET text = ? WHERE path = ?`).run("Buttons Bebe orders ship in 24 to 48 hours.", "faq/shipping.md");
+  built.close();
+  const legacyIndex = await search.searchKb("shipping times");
+  assert.equal(legacyIndex.results[0].title, "Cute Things shipping times");
+  assert.match(legacyIndex.results[0].text, /Cute Things orders/);
+  assert.doesNotMatch(JSON.stringify(legacyIndex.results), /Buttons Bebe/);
 });
 
 test("FTS syntax in a query can't break or widen the search", async () => {
@@ -138,6 +166,9 @@ test("hybrid search with embeddings ranks by meaning too", async () => {
 test("only the owner can edit articles; agents can read", async () => {
   const read = await call(articleRoute.GET, { url: "http://t/api/kb/article?path=policies/returns.md", headers: { cookie: agent.cookie } });
   assert.equal(read.status, 200);
+  const legacyRead = await call(articleRoute.GET, { url: "http://t/api/kb/article?path=faq/shipping.md", headers: { cookie: agent.cookie } });
+  assert.equal(legacyRead.json.title, "Cute Things shipping times");
+  assert.doesNotMatch(legacyRead.json.raw, /Buttons Bebe/);
   const raw = read.json.raw.replace("14 days", "21 days");
   const denied = await call(articleRoute.PUT, { method: "PUT", headers: { cookie: agent.cookie }, body: { path: "policies/returns.md", raw } });
   assert.equal(denied.status, 403);

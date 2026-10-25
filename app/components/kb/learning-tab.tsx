@@ -68,6 +68,9 @@ export function LearningTab({ owner }: { owner: boolean }) {
         </span>
         <span className="text-xs text-muted-foreground">Approved lessons are masked and added every night at 03:30 UTC.</span>
       </div>
+      <p className="rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs text-muted-foreground">
+        Approving adds the masked customer question and sent reply as a searchable example to guide future drafts&apos; tone and structure. Verify policy facts against current knowledge-base guidance, and have staff review every draft. Rejecting keeps it out of the knowledge base. Until nightly promotion, use the opposite button to change either decision. Once a lesson is in the knowledge base, contact the helpdesk maintainer to withdraw its published example and rebuild the index.
+      </p>
       <div className="flex flex-wrap gap-1">
         {FILTERS.map(([value, label]) => (
           <button
@@ -98,12 +101,12 @@ export function LearningTab({ owner }: { owner: boolean }) {
               {owner && (l.status === "pending" || l.status === "approved" || l.status === "rejected") && (
                 <span className="ml-auto flex gap-1">
                   {l.status !== "approved" && (
-                    <button type="button" onClick={() => decide(l.id, "approved")} className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground">
+                    <button type="button" title="Add this masked reply as a knowledge-base example tonight" onClick={() => decide(l.id, "approved")} className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground">
                       <Check className="size-3.5" /> Approve
                     </button>
                   )}
                   {l.status !== "rejected" && (
-                    <button type="button" onClick={() => decide(l.id, "rejected")} className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium ring-1 ring-border hover:bg-accent">
+                    <button type="button" title="Keep this reply out of the knowledge base; you can change this before promotion" onClick={() => decide(l.id, "rejected")} className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium ring-1 ring-border hover:bg-accent">
                       <X className="size-3.5" /> Reject
                     </button>
                   )}

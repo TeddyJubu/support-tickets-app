@@ -5,8 +5,9 @@
 // which store is connected. Never shows the store's keys.
 
 import { useCallback, useEffect, useState } from "react";
-import { Store, Link2, Unlink, AlertTriangle, CheckCircle2, Lock, Copy, Check, Loader2 } from "lucide-react";
+import { Store, Link2, Unlink, AlertTriangle, CheckCircle2, Lock, Copy, Check, Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/helpdesk-format";
 import type { ShopifyStatus } from "@/lib/shopify-connect";
 import { apiJson, jsonInit } from "./api";
 
@@ -59,7 +60,7 @@ function AppSetup({ setup, open }: { setup: ShopifyStatus["setup"]; open: boolea
 export function SettingsConsole() {
   const [status, setStatus] = useState<ShopifyStatus | null>(null);
   const [shopInput, setShopInput] = useState("");
-  const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
+  const [busy, setBusy] = useState<"connect" | "disconnect" | "check" | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
@@ -125,6 +126,21 @@ export function SettingsConsole() {
     }
   };
 
+  const checkConnection = async () => {
+    setBusy("check");
+    setNotice(null);
+    try {
+      const result = await apiJson<{ shop: string; shopName: string | null }>("/api/shopify/status", jsonInit("POST"));
+      await load();
+      setNotice({ tone: "ok", text: "Read-only check succeeded for " + (result.shopName || domain(result.shop)) + ". The check read shop metadata only." });
+    } catch (err) {
+      await load();
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : "Shopify connection check failed" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const c = status?.connection ?? null;
   const owner = !!status?.canManage;
 
@@ -178,7 +194,7 @@ export function SettingsConsole() {
                   {c.status === "connected" ? (
                     <p className="text-xs text-muted-foreground">
                       Connected{c.connectedBy ? ` by ${c.connectedBy}` : ""}
-                      {c.connectedAt ? ` on ${new Date(c.connectedAt).toLocaleDateString()}` : ""}. Reads {c.scopes.join(", ") || "nothing"}.
+                      {c.connectedAt ? ` on ${formatDate(c.connectedAt)}` : ""}. Reads {c.scopes.join(", ") || "nothing"}.
                     </p>
                   ) : (
                     <p className="text-xs text-warning">
@@ -247,6 +263,16 @@ export function SettingsConsole() {
               {owner && !status.appConfigured && (
                 <p className="text-xs text-warning">Set up the Shopify app below before connecting a store.</p>
               )}
+            </div>
+          )}
+
+          {status?.active && (
+            <div className="mt-3 space-y-1">
+              <button type="button" onClick={checkConnection} disabled={!!busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium ring-1 ring-border hover:bg-accent disabled:opacity-50">
+                {busy === "check" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} Check connection
+              </button>
+              <p className="text-xs text-muted-foreground">This read-only check reads the store name only. It does not read customer or order data.</p>
+              {status.lastSuccessfulCheckAt && <p className="text-xs text-muted-foreground">Last successful check: {formatDateTime(status.lastSuccessfulCheckAt)}.</p>}
             </div>
           )}
 

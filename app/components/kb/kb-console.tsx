@@ -2,7 +2,7 @@
 
 // Knowledge base console: browse and edit articles, test search, re-index, Notice Board.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Search,
   Plus,
@@ -19,6 +19,8 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/helpdesk-format";
+import { articleFilenameFromTitle } from "@/lib/kb/article-name";
 import { apiJson, jsonInit } from "../api";
 import { useSession } from "../context/session-context";
 import { Markdown } from "../markdown";
@@ -64,7 +66,9 @@ const FOLDER_LABEL: Record<string, string> = {
   products: "Products",
 };
 
-const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : "never");
+const when = (iso: string | null | undefined) => (iso ? formatDateTime(iso) : "never");
+const subscribeNoop = () => () => {};
+const localTimeZoneSnapshot = () => Intl.DateTimeFormat().resolvedOptions().timeZone || null;
 
 function Banner({ tone, children }: { tone: "error" | "ok" | "info"; children: React.ReactNode }) {
   return (
@@ -128,7 +132,7 @@ export function IndexStatusBar({ owner, onReindexed }: { owner: boolean; onReind
       </span>
       {status.index.docs != null && !running && (
         <span>
-          {status.index.docs} articles · {status.index.chunks} sections · {status.index.embeddings ? "meaning + keyword search" : "keyword search only"}
+          {status.index.docs} {status.index.docs === 1 ? "article" : "articles"} · {status.index.chunks ?? 0} {status.index.chunks === 1 ? "section" : "sections"} · {status.index.embeddings ? "meaning + keyword search" : "keyword search only"}
         </span>
       )}
       <span className={cn(!status.products.fresh && "text-warning")}>
@@ -227,9 +231,9 @@ function TestSearch() {
 
 // ---------- articles ----------
 
-const TEMPLATE = `---
-title: New topic
-category: policies
+const articleTemplate = (title: string, folder: string) => `---
+title: '${title.replace(/'/g, "''")}'
+category: ${folder}
 status: draft
 tags: []
 ---
@@ -243,17 +247,21 @@ safety rules a section needs inside that section.
 function NewArticle({ folders, onCreated }: { folders: string[]; onCreated: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const [folder, setFolder] = useState(folders[0] ?? "policies");
-  const [name, setName] = useState("");
+  const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const filename = articleFilenameFromTitle(title);
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
-    const file = name.trim().toLowerCase().replace(/\s+/g, "-").replace(/\.md$/, "");
-    if (!/^[a-z0-9][a-z0-9._-]{0,90}$/.test(file)) return setError("Use letters, digits, - and _");
+    const cleanTitle = title.trim().replace(/\s+/g, " ");
+    const file = articleFilenameFromTitle(cleanTitle);
+    if (!cleanTitle) return setError("Enter an article title.");
+    if (!file) return setError("Use a title with at least one letter or number so it can make a safe filename.");
     try {
-      await apiJson("/api/kb/article", jsonInit("POST", { path: `${folder}/${file}.md`, raw: TEMPLATE.replace("category: policies", `category: ${folder}`) }));
+      const path = `${folder}/${file}`;
+      await apiJson("/api/kb/article", jsonInit("POST", { path, raw: articleTemplate(cleanTitle, folder) }));
       setOpen(false);
-      setName("");
-      onCreated(`${folder}/${file}.md`);
+      setTitle("");
+      onCreated(path);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't create it");
     }
@@ -266,7 +274,7 @@ function NewArticle({ folders, onCreated }: { folders: string[]; onCreated: (pat
     );
   }
   return (
-    <form onSubmit={create} className="flex flex-wrap items-center gap-2">
+    <form data-testid="kb-new-article-form" onSubmit={create} className="flex flex-wrap items-center gap-2">
       <select value={folder} onChange={(e) => setFolder(e.target.value)} aria-label="Folder" className="h-8 rounded-lg border border-input bg-background px-2 text-sm">
         {folders.map((f) => (
           <option key={f} value={f}>
@@ -276,14 +284,15 @@ function NewArticle({ folders, onCreated }: { folders: string[]; onCreated: (pat
       </select>
       <input
         autoFocus
-        value={name}
+        value={title}
         onChange={(e) => {
-          setName(e.target.value);
+          setTitle(e.target.value);
           setError(null);
         }}
-        placeholder="file-name"
-        aria-label="File name"
-        className="h-8 w-44 rounded-lg border border-input bg-background px-2 text-sm outline-none focus:border-ring"
+        maxLength={120}
+        placeholder="Return and exchange policy"
+        aria-label="Article title"
+        className="h-8 min-w-52 flex-1 rounded-lg border border-input bg-background px-2 text-sm outline-none focus:border-ring"
       />
       <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground">
         Create
@@ -291,6 +300,11 @@ function NewArticle({ folders, onCreated }: { folders: string[]; onCreated: (pat
       <button type="button" onClick={() => setOpen(false)} aria-label="Cancel" className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-accent">
         <X className="size-4" />
       </button>
+      <span className="w-full text-xs text-muted-foreground">
+        {filename
+          ? `File: ${folder}/${filename} · lowercase letters and digits; spaces and punctuation become hyphens.`
+          : "The title creates a safe lowercase filename; spaces and punctuation become hyphens."}
+      </span>
       {error && <span className="w-full text-xs text-destructive">{error}</span>}
     </form>
   );
@@ -349,44 +363,47 @@ function ArticleEditor({ path, owner, onSaved }: { path: string; owner: boolean;
   const canEdit = owner && article.editable;
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold">{article.title}</h2>
-          <p className="truncate font-mono text-[11px] text-muted-foreground">
-            {article.path} · {article.versions} earlier version{article.versions === 1 ? "" : "s"} kept
-          </p>
+      <div className="flex min-w-0 flex-col gap-3 border-b border-border px-5 py-3 md:flex-row md:items-center md:gap-2">
+        <div className="w-full min-w-0 md:flex-1">
+          <h2 className="break-words text-lg font-semibold leading-snug">{article.title}</h2>
+          <details className="mt-1 text-[10px] text-muted-foreground/75">
+            <summary className="w-fit cursor-pointer hover:text-foreground">Article details</summary>
+            <p className="mt-1 break-all font-mono">{article.path} · {article.versions} earlier version{article.versions === 1 ? "" : "s"} kept</p>
+          </details>
         </div>
-        {article.sensitive && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive" title="Drafts on this topic always go to a person">
-            <ShieldAlert className="size-3.5" /> Sensitive
-          </span>
-        )}
-        {canEdit && (
-          <div className="inline-flex rounded-lg bg-muted p-0.5 text-xs">
-            {(["preview", "edit"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium", mode === m ? "bg-background shadow-soft" : "text-muted-foreground")}
-              >
-                {m === "preview" ? <Eye className="size-3.5" /> : <Pencil className="size-3.5" />}
-                {m === "preview" ? "Preview" : "Edit"}
-              </button>
-            ))}
-          </div>
-        )}
-        {canEdit && (
-          <button
-            type="button"
-            onClick={save}
-            disabled={!dirty || saving}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
-          >
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {dirty ? "Save" : "Saved"}
-          </button>
-        )}
+        <div data-testid="kb-article-actions" className="flex w-full flex-wrap items-center gap-2 md:w-auto md:flex-nowrap">
+          {article.sensitive && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive" title="Drafts on this topic always go to a person">
+              <ShieldAlert className="size-3.5" /> Sensitive
+            </span>
+          )}
+          {canEdit && (
+            <div className="inline-flex rounded-lg bg-muted p-0.5 text-xs">
+              {(["preview", "edit"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium", mode === m ? "bg-background shadow-soft" : "text-muted-foreground")}
+                >
+                  {m === "preview" ? <Eye className="size-3.5" /> : <Pencil className="size-3.5" />}
+                  {m === "preview" ? "Preview" : "Edit"}
+                </button>
+              ))}
+            </div>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={save}
+              disabled={!dirty || saving}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              {dirty ? "Save" : "Saved"}
+            </button>
+          )}
+        </div>
       </div>
       {message && (
         <div className="px-5 pt-3">
@@ -400,7 +417,7 @@ function ArticleEditor({ path, owner, onSaved }: { path: string; owner: boolean;
           </Banner>
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      <div data-testid="kb-article-body" className="min-h-0 flex-1 overflow-y-auto p-5">
         {mode === "edit" ? (
           <textarea
             value={draft}
@@ -425,16 +442,27 @@ export function ArticlesTab({ owner }: { owner: boolean }) {
   const [folder, setFolder] = useState<string>("");
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ folder: string; message: string } | null>(null);
+  const [loadedFolder, setLoadedFolder] = useState<string | null>(null);
+  const request = useRef(0);
+  const error = loadError?.folder === folder ? loadError.message : null;
+  const loading = loadedFolder !== folder && !error;
 
   const load = useCallback(
-    () =>
-      apiJson<{ articles: ArticleSummary[]; editableFolders: string[] }>(`/api/kb/articles${folder === "products" ? "?folder=products" : ""}`)
+    () => {
+      const mine = ++request.current;
+      return apiJson<{ articles: ArticleSummary[]; editableFolders: string[] }>(`/api/kb/articles${folder === "products" ? "?folder=products" : ""}`)
         .then((data) => {
+          if (mine !== request.current) return;
           setArticles(data.articles);
           setEditable(data.editableFolders);
+          setLoadedFolder(folder);
+          setLoadError(null);
         })
-        .catch((e) => setError(e instanceof Error ? e.message : "Couldn't load articles")),
+        .catch((e) => {
+          if (mine === request.current) setLoadError({ folder, message: e instanceof Error ? e.message : "Couldn't load articles" });
+        });
+    },
     [folder],
   );
   useEffect(() => {
@@ -449,9 +477,9 @@ export function ArticlesTab({ owner }: { owner: boolean }) {
   }, [articles, folder, filter]);
 
   return (
-    <div className="grid h-[calc(100dvh-12.5rem)] min-h-[28rem] grid-cols-1 grid-rows-[minmax(0,16rem)_minmax(0,1fr)] overflow-hidden rounded-xl border border-border bg-card md:grid-cols-[20rem_1fr] md:grid-rows-1">
-      <div className="flex min-h-0 flex-col border-b border-border md:border-b-0 md:border-r">
-        <div className="space-y-2 border-b border-border p-3">
+    <div className="grid h-auto min-h-[28rem] grid-cols-1 grid-rows-[auto_minmax(20rem,auto)] overflow-visible rounded-xl border border-border bg-card md:h-[calc(100dvh-12.5rem)] md:min-h-[28rem] md:grid-cols-[24rem_1fr] md:grid-rows-1 md:overflow-hidden">
+      <div data-testid="kb-article-list-pane" className="flex min-h-0 flex-col border-b border-border md:border-b-0 md:border-r">
+        <div data-testid="kb-article-controls" className="shrink-0 space-y-2 border-b border-border p-3">
           <label className="flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm">
             <Search className="size-4 text-muted-foreground" />
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by title or tag" aria-label="Filter articles" className="w-full bg-transparent outline-none" />
@@ -470,9 +498,15 @@ export function ArticlesTab({ owner }: { owner: boolean }) {
           </div>
           {owner && <NewArticle folders={editable} onCreated={(p) => load().then(() => setSelected(p))} />}
         </div>
-        {error && <p className="p-3 text-sm text-destructive">{error}</p>}
-        <ul className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {shown.map((a) => (
+        {error && (
+          <p className="flex items-center justify-between gap-3 p-3 text-sm text-destructive" role="alert">
+            <span>{error}</span>
+            <button type="button" onClick={() => void load()} className="shrink-0 underline underline-offset-2">Retry</button>
+          </p>
+        )}
+        <ul data-testid="kb-article-list" className="max-h-64 min-h-16 overflow-y-auto p-1.5 md:max-h-none md:flex-1">
+          {loading && <li className="p-3 text-sm text-muted-foreground" role="status">Loading articles…</li>}
+          {!loading && shown.map((a) => (
             <li key={a.path}>
               <button
                 type="button"
@@ -481,7 +515,7 @@ export function ArticlesTab({ owner }: { owner: boolean }) {
                 className={cn("w-full rounded-lg px-2.5 py-2 text-left", selected === a.path ? "bg-accent" : "hover:bg-accent/60")}
               >
                 <span className="flex items-center gap-1.5">
-                  <span className="truncate text-sm font-medium">{a.title}</span>
+                  <span className="line-clamp-2 break-words text-sm font-medium">{a.title}</span>
                   {a.sensitive && <ShieldAlert className="size-3.5 shrink-0 text-destructive" aria-label="Sensitive" />}
                 </span>
                 <span className="block truncate text-[11px] text-muted-foreground">
@@ -490,10 +524,10 @@ export function ArticlesTab({ owner }: { owner: boolean }) {
               </button>
             </li>
           ))}
-          {!shown.length && !error && <li className="p-3 text-sm text-muted-foreground">No articles{filter ? " match" : " yet"}.</li>}
+          {!loading && !shown.length && !error && <li className="p-3 text-sm text-muted-foreground">No articles{filter ? " match" : " yet"}.</li>}
         </ul>
       </div>
-      <div className="min-h-0">
+      <div data-testid="kb-article-editor-pane" className="min-h-0">
         {selected ? (
           <ArticleEditor key={selected} path={selected} owner={owner} onSaved={load} />
         ) : (
@@ -509,6 +543,7 @@ export function ArticlesTab({ owner }: { owner: boolean }) {
 export function NoticeBoard({ owner }: { owner: boolean }) {
   const [notices, setNotices] = useState<Notice[] | null>(null);
   const [form, setForm] = useState({ title: "", body: "", expiresAt: "" });
+  const timeZone = useSyncExternalStore(subscribeNoop, localTimeZoneSnapshot, () => null);
   const [reviewing, setReviewing] = useState(false);
   const [message, setMessage] = useState<{ tone: "error" | "ok"; text: string } | null>(null);
   const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
@@ -550,6 +585,7 @@ export function NoticeBoard({ owner }: { owner: boolean }) {
   const active = notices?.filter((n) => n.active) ?? [];
   const past = notices?.filter((n) => !n.active) ?? [];
   const input = "mt-1 block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring";
+  const noticeExpiry = (value: string) => `${formatDateTime(value)}${timeZone ? ` (${timeZone})` : ""}`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_24rem]">
@@ -564,7 +600,7 @@ export function NoticeBoard({ owner }: { owner: boolean }) {
                 <h3 className="font-medium">{n.title}</h3>
                 <p className="mt-1 whitespace-pre-wrap text-sm">{n.body}</p>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  By {n.createdBy} · {when(n.createdAt)} · {n.expiresAt ? `ends ${when(n.expiresAt)}` : "until ended"}
+                  By {n.createdBy} · {when(n.createdAt)} · {n.expiresAt ? `ends ${noticeExpiry(n.expiresAt)}` : "until ended"}
                 </p>
               </div>
               {owner &&
@@ -627,7 +663,7 @@ export function NoticeBoard({ owner }: { owner: boolean }) {
                 <p className="text-xs font-medium text-muted-foreground">The AI will be told:</p>
                 <p className="mt-1 font-medium">{form.title.trim()}</p>
                 <p className="mt-1 whitespace-pre-wrap">{form.body.trim()}</p>
-                <p className="mt-2 text-xs text-muted-foreground">{form.expiresAt ? `Until ${new Date(form.expiresAt).toLocaleString()}` : "Until you end it"}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{form.expiresAt ? `Until ${noticeExpiry(new Date(form.expiresAt).toISOString())}` : "Until you end it"}</p>
               </div>
               <div className="flex justify-end gap-2">
                 <button type="button" onClick={() => setReviewing(false)} className="h-8 rounded-lg px-3 text-sm ring-1 ring-border hover:bg-accent">
@@ -649,8 +685,12 @@ export function NoticeBoard({ owner }: { owner: boolean }) {
                 <textarea className={input} rows={4} maxLength={2000} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} />
               </label>
               <label className="block text-sm font-medium">
-                Ends <span className="font-normal text-muted-foreground">(optional)</span>
+                Ends at <span className="font-normal text-muted-foreground">(optional)</span>
                 <input type="datetime-local" className={input} value={form.expiresAt} onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.value }))} />
+                <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                  Uses your device&apos;s local time zone{timeZone ? `: ${timeZone}` : ""}.
+                  {form.expiresAt && !Number.isNaN(Date.parse(form.expiresAt)) && ` UTC equivalent: ${new Date(form.expiresAt).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC")}.`}
+                </span>
               </label>
               <button type="submit" className="h-8 w-full rounded-lg bg-primary text-sm font-medium text-primary-foreground">
                 Review before publishing

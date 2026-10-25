@@ -22,10 +22,13 @@ export function formatDuration(seconds: number | null | undefined) {
   return `${Math.round(hours / 24)} days`;
 }
 
-// Export timestamps are "YYYY-MM-DD HH:MM:SS"
+// Export and SQLite timestamps may be "YYYY-MM-DD HH:MM:SS"; unzoned SQL values are UTC.
 export function parseExportDate(value: string | null | undefined) {
   if (!value) return null;
-  const d = new Date(value.replace(" ", "T"));
+  const normalized = value.replace(" ", "T");
+  // SQLite's unzoned "YYYY-MM-DD HH:MM:SS" timestamps are UTC.
+  const hasTimezone = /(?:z|[+-]\d{2}(?::?\d{2})?)$/i.test(normalized);
+  const d = new Date(value.includes(" ") && !hasTimezone ? `${normalized}Z` : normalized);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -38,7 +41,9 @@ export function formatDate(value: string | null | undefined) {
 
 export function formatTime(value: string | null | undefined) {
   const d = parseExportDate(value);
-  return d ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  return d
+    ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" })
+    : "";
 }
 
 export function initials(name: string | null | undefined) {
@@ -113,6 +118,7 @@ export function formatDateTime(value: string | null | undefined) {
         year: "numeric",
         hour: "numeric",
         minute: "2-digit",
+        timeZoneName: "short",
       })
     : "—";
 }

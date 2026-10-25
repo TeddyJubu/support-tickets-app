@@ -27,7 +27,10 @@ export function overview() {
     escalations: part(() =>
       (d
         .prepare(
-          `SELECT t.id, t.subject, t.priority, t.status, t.updated_at, u.display_name AS assignee FROM sim_tickets t
+          `SELECT t.id, t.subject, t.priority, t.status, t.updated_at, u.display_name AS assignee,
+                  (SELECT a.detail FROM audit_log a WHERE a.ticket_id = t.id AND a.action = 'triage'
+                   AND a.actor IN ('classifier', 'worker') ORDER BY a.id DESC LIMIT 1) AS priority_detail
+           FROM sim_tickets t
            LEFT JOIN staff_users u ON u.id = t.assignee_id
            WHERE ${ACTIVE.replace(/(trashed_at|spam_at|status|snoozed_until)/g, "t.$1")} AND t.priority IN ('critical', 'high')
            ORDER BY CASE t.priority WHEN 'critical' THEN 0 ELSE 1 END, t.updated_at DESC LIMIT 12`,
@@ -38,6 +41,14 @@ export function overview() {
         priority: String(r.priority),
         status: String(r.status),
         assignee: r.assignee == null ? null : String(r.assignee),
+        priorityReason: (() => {
+          try {
+            const detail = JSON.parse(String(r.priority_detail ?? "")) as { reason?: unknown };
+            return typeof detail.reason === "string" && detail.reason.trim() ? detail.reason.trim().slice(0, 240) : null;
+          } catch {
+            return null;
+          }
+        })(),
         updatedAt: iso(r.updated_at),
       })),
     ),
@@ -67,10 +78,13 @@ export function overview() {
       return {
         last24h: { created: Number(today.created ?? 0), used: Number(today.used ?? 0), dismissed: Number(today.dismissed ?? 0), needsStaff: Number(today.needsStaff ?? 0) },
         queue: queueStats(d),
+        queueCheckedAt: new Date().toISOString(),
       };
     }),
     activity: part(() =>
-      (d.prepare(`SELECT actor, action, ticket_id, at FROM audit_log WHERE actor NOT IN ('classifier', 'worker') AND action NOT IN ('login', 'send_access_on') ORDER BY id DESC LIMIT 20`).all() as Row[]).map((r) => ({
+      (d.prepare(`SELECT COALESCE(u.display_name, a.actor) AS actor, a.action, a.ticket_id, a.at FROM audit_log a
+                  LEFT JOIN staff_users u ON u.username = a.actor
+                  WHERE a.actor NOT IN ('classifier', 'worker') AND a.action NOT IN ('login', 'send_access_on') ORDER BY a.id DESC LIMIT 20`).all() as Row[]).map((r) => ({
         actor: String(r.actor),
         action: String(r.action),
         ticketId: r.ticket_id == null ? null : String(r.ticket_id),

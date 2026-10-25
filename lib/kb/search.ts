@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { embed } from "../workers-ai";
 import { FOLDER_WEIGHT } from "./files";
+import { normalizeLegacyStoreBrand } from "./branding";
 import { kbDbPath } from "./index";
 import { activeNotices, type Notice } from "./notices";
 
@@ -118,9 +119,9 @@ export async function searchKb(query: string, k = 5): Promise<KbSearchOutcome> {
     .map((r) => ({
       path: String(r.path),
       folder: String(r.folder),
-      title: String(r.title),
-      heading: r.heading == null ? null : String(r.heading),
-      text: String(r.text).slice(0, 1500),
+      title: normalizeLegacyStoreBrand(String(r.title)),
+      heading: r.heading == null ? null : normalizeLegacyStoreBrand(String(r.heading)),
+      text: normalizeLegacyStoreBrand(String(r.text)).slice(0, 1500),
       score: (scores.get(Number(r.id)) ?? 0) * (FOLDER_WEIGHT[String(r.folder)] ?? 1),
       sensitive: Number(r.sensitive) === 1,
     }))

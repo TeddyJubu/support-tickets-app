@@ -1,13 +1,16 @@
 // A staff member's in-app notifications (the bell)
 
 import { getDb } from "./sim-db";
+import type { NotificationItem } from "./notification-groups";
+export { groupNotifications } from "./notification-groups";
+export type { NotificationGroup, NotificationItem } from "./notification-groups";
 
 type Row = Record<string, unknown>;
 
 export function myNotifications(userId: number, limit = 30) {
   const d = getDb();
   const unread = Number((d.prepare(`SELECT count(*) AS c FROM notifications WHERE user_id = ? AND read_at IS NULL`).get(userId) as Row).c);
-  const items = (d.prepare(`SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?`).all(userId, limit) as Row[]).map((r) => ({
+  const items: NotificationItem[] = (d.prepare(`SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?`).all(userId, limit) as Row[]).map((r) => ({
     id: Number(r.id),
     kind: String(r.kind),
     ticketId: r.ticket_id == null ? null : String(r.ticket_id),

@@ -8,6 +8,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const user = requireOwner(request);
   if (user instanceof Response) return user;
   const { id } = await params;
-  if (!/^\d+$/.test(id) || !retryAlert(Number(id), user.username)) return Response.json({ error: "Only failed or skipped alerts can be retried" }, { status: 409 });
-  return Response.json({ ok: true });
+  if (!/^\d+$/.test(id)) return Response.json({ error: "Only failed or skipped alerts can be retried" }, { status: 409 });
+  const result = retryAlert(Number(id), user.username);
+  if (!result.ok) return Response.json({ error: "Only failed or skipped alerts can be retried" }, { status: 409 });
+  return Response.json(result);
 }

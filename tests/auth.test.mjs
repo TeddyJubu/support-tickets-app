@@ -108,6 +108,41 @@ test("/api/auth/me returns the user and staff list, never password hashes", asyn
   assert.equal((await call(meRoute.GET)).status, 401);
 });
 
+test("staff can update only their own display name from the same origin", async () => {
+  const s = await staffSession({ displayName: "Your Name" });
+  const other = await staffSession({ displayName: "Other Agent" });
+  const headers = { cookie: s.cookie, origin: "https://helpdesk.test", host: "helpdesk.test", "x-forwarded-proto": "https" };
+  const r = await call(meRoute.PATCH, {
+    method: "PATCH",
+    url: "https://helpdesk.test/api/auth/me",
+    headers,
+    body: { displayName: "  Morgan\n Vale  " },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.user.displayName, "Morgan Vale");
+  assert.equal(auth.getUser(s.user.id).displayName, "Morgan Vale");
+  assert.equal(auth.getUser(other.user.id).displayName, "Other Agent");
+});
+
+test("display-name changes require a staff session and same-origin request", async () => {
+  const s = await staffSession({ displayName: "Before" });
+  const body = { displayName: "After" };
+  assert.equal((await call(meRoute.PATCH, { method: "PATCH", body })).status, 401);
+  assert.equal((await call(meRoute.PATCH, { method: "PATCH", headers: { cookie: s.cookie, origin: "https://evil.example" }, body })).status, 403);
+  assert.equal((await call(meRoute.PATCH, { method: "PATCH", headers: { cookie: s.cookie }, body })).status, 403);
+  assert.equal(auth.getUser(s.user.id).displayName, "Before");
+});
+
+test("display-name updates reject empty, too-long, and placeholder values", async () => {
+  const s = await staffSession({ displayName: "Before" });
+  const headers = { cookie: s.cookie, origin: "http://test", host: "test" };
+  for (const displayName of ["  ", "x".repeat(61), "yourname"]) {
+    const r = await call(meRoute.PATCH, { method: "PATCH", headers, body: { displayName } });
+    assert.equal(r.status, 400, displayName);
+  }
+  assert.equal(auth.getUser(s.user.id).displayName, "Before");
+});
+
 // ---------- proxy ----------
 
 const run = (path, { method = "GET", headers = {} } = {}) =>

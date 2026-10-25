@@ -49,6 +49,8 @@ test("the worker's draft prompt names the store and signs with its sender name",
     const prompt = drafting.systemPrompt("token123");
     assert.match(prompt, /^You draft email replies for Acme Kids \(a toy shop\) customer support\./);
     assert.match(prompt, /Sign off as "Acme Care"\./);
+    assert.match(prompt, /current store name is Acme Kids/);
+    assert.match(prompt, /never copy their branding into a current reply/);
     assert.doesNotMatch(prompt, /Cute Things/);
   });
 });
@@ -63,6 +65,7 @@ test("chat: the server's instructions replace the browser's; the ticket context 
     assert.equal(r.status, 200);
     assert.match(r.json.systemPrompt, /^You are an AI assistant helping the customer support agents of Acme Kids/);
     assert.match(r.json.systemPrompt, /customers email help@acme\.example/);
+    assert.match(r.json.systemPrompt, /current store name, Acme Kids/);
     assert.match(r.json.systemPrompt, /\n\n## Current App Context:\nTicket SIM-1 from Ada$/);
 
     // A browser trying to rewrite the instructions only keeps its context section

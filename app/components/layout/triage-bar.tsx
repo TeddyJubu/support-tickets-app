@@ -20,6 +20,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/helpdesk-format";
 import { PRIORITIES, type Ticket } from "@/lib/helpdesk-types";
 import { useDashboard } from "../context/dashboard-context";
 import { useSession } from "../context/session-context";
@@ -175,7 +176,7 @@ export function TriageBar({ ticket }: { ticket: Ticket }) {
             title="Wake now"
           >
             <AlarmClock className="size-3.5" />
-            Until {new Date(ticket.snoozedUntil).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}
+            Until {formatDateTime(ticket.snoozedUntil)}
             <X className="size-3" />
           </button>
         ) : (
@@ -195,7 +196,7 @@ export function TriageBar({ ticket }: { ticket: Ticket }) {
                   <MenuItem
                     key={o.label}
                     label={o.label}
-                    hint={o.until.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}
+                    hint={formatDateTime(o.until.toISOString())}
                     onSelect={() => {
                       close();
                       updateTicket({ snoozedUntil: o.until.toISOString() }, ticket.id, "Snoozed: it comes back on its own, or when the customer writes");

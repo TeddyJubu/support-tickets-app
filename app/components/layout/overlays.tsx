@@ -56,7 +56,10 @@ export function useHotkeys(onShowShortcuts: () => void, enabled = true) {
   useEffect(() => {
     if (!enabled) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
+      // A focused overlay must never trigger ticket changes in the workspace behind it.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]') ||
+        (e.target instanceof HTMLElement && e.target.closest('[role="dialog"], [role="menu"]'))) return;
       switch (e.key) {
         case "j":
           selectAdjacentTicket(1);
@@ -161,7 +164,7 @@ export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () 
         aria-modal="true"
         aria-labelledby="shortcuts-title"
         onMouseDown={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-pop animate-in zoom-in-95 duration-150"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-pop animate-in zoom-in-95 duration-150"
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id="shortcuts-title" className="text-base font-semibold">

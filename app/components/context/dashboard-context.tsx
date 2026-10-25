@@ -94,7 +94,7 @@ function readPanel(): SidePanel | null {
   } catch {}
   if (saved === "copilot" || saved === "customer") return saved;
   // Collapsed by default where it would cover the conversation
-  return saved === "none" || window.innerWidth < 1280 ? null : "copilot";
+  return null;
 }
 function writePanel(panel: SidePanel | null) {
   try {
@@ -161,7 +161,6 @@ function simMessages(detail: TicketDetail): TicketMessage[] {
 function messagesFromDetail(detail: TicketDetail): TicketMessage[] {
   if (detail.messages) return simMessages(detail);
   const { ticket } = detail;
-  const name = ticket.customerName ?? ticket.customerEmail ?? "Customer";
   const messages: TicketMessage[] = [
     {
       id: 1,
@@ -174,9 +173,7 @@ function messagesFromDetail(detail: TicketDetail): TicketMessage[] {
     },
     {
       id: 2,
-      type: "customer",
-      sender: name,
-      avatar: initials(name),
+      type: "system",
       channel: "Email",
       emailSubject: ticket.subject ?? "(no subject)",
       timestamp: formatTime(ticket.createdAt),
@@ -242,7 +239,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [bulkSelection, setBulkSelection] = useState<Set<string>>(() => new Set());
 
   // Right-hand panel (AI copilot or customer details); null when collapsed
-  const sidePanel = useSyncExternalStore(subscribePanel, readPanel, () => "copilot" as SidePanel);
+  const sidePanel = useSyncExternalStore(subscribePanel, readPanel, () => null);
   const setSidePanel = useCallback((panel: SidePanel | null) => writePanel(panel), []);
 
   // Toasts
@@ -339,6 +336,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const selectTicket = useCallback(
     async (id: string) => {
+      // Selecting the already-open ticket must keep its unsent reply and AI edits.
+      if (selectedRef.current === id && detailRef.current?.ticket.id === id) return;
       const request = ++detailRequest.current;
       selectedRef.current = id;
       setSelectedTicketId(id);
@@ -390,7 +389,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const timer = setTimeout(async () => {
       const list = await fetchTickets(ticketQuery, 0);
-      if (!selectedRef.current && list[0]) selectTicket(list[0].id);
+      if (!selectedRef.current && list[0] && !window.matchMedia("(max-width: 767px)").matches) selectTicket(list[0].id);
     }, ticketQuery ? 300 : 0);
     return () => clearTimeout(timer);
   }, [ticketQuery, ticketSource, view, filters, fetchTickets, selectTicket]);
@@ -447,7 +446,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const retryTickets = useCallback(async () => {
     const list = await fetchTickets(ticketQuery);
-    if (!selectedRef.current && list[0]) selectTicket(list[0].id);
+    if (!selectedRef.current && list[0] && !window.matchMedia("(max-width: 767px)").matches) selectTicket(list[0].id);
   }, [fetchTickets, ticketQuery, selectTicket]);
 
   const hasNextPage = (page + 1) * PAGE_SIZE < ticketTotal;
@@ -587,7 +586,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     const ms = Date.parse(sendAccessUntil) - Date.now();
     const timer = setTimeout(() => {
       setSendAccessUntil(null);
-      notify("Read & write ended: sending is off again", "info");
+      notify("Sending access expired. Enable sending again to review a reply.", "info");
     }, Math.max(0, ms));
     return () => clearTimeout(timer);
   }, [sendAccessUntil, notify]);
@@ -599,7 +598,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         setSendAccessUntil(expiresAt);
         return true;
       } catch (err) {
-        notify(`Couldn't change Read & write: ${err instanceof Error ? err.message : "error"}`, "error");
+        notify(`Couldn't change sending access: ${err instanceof Error ? err.message : "error"}`, "error");
         return false;
       }
     },
@@ -608,7 +607,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   // Opens the review dialog (inbox tickets); resolves true when the review is shown
   const sendAgentMessage = useCallback(
-    async (content: string, channel: "Chat" | "Email" = "Email", emailSubject?: string, closeAfter = false): Promise<boolean> => {
+    async (content: string, _channel: "Chat" | "Email" = "Email", _emailSubject?: string, closeAfter = false): Promise<boolean> => {
+      void _channel;
       if (!content.trim()) return false;
       const id = selectedRef.current;
       if (!id || ticketDetail?.ticket.id !== id) {
@@ -617,7 +617,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       }
       if (id.startsWith("SIM-")) {
         if (!sendAccessUntil) {
-          notify("Sending is off. Turn on Read & write first.", "error");
+          notify("Sending is off. Enable sending for 30 minutes first.", "error");
           return false;
         }
         setSending(true);
@@ -634,26 +634,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
           setSending(false);
         }
       }
-      // Archived tickets: the reply only lives in this view
-      setState((prev) => ({
-        ...prev,
-        messages: [
-          ...prev.messages,
-          {
-            id: Date.now(),
-            type: "agent" as const,
-            sender: "You",
-            avatar: initials("You"),
-            channel,
-            timestamp: formatTime(new Date().toISOString()),
-            date: new Date().toISOString(),
-            content,
-            ...(channel === "Email" && emailSubject ? { emailSubject } : {}),
-          },
-        ],
-        composeText: "",
-      }));
-      return true;
+      notify("Archived tickets are read-only. Replies are unavailable.", "info");
+      return false;
     },
     [ticketDetail, notify, sendAccessUntil, refreshSelected],
   );
@@ -724,8 +706,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       const id = ticketId ?? selectedRef.current;
       const onScreen = () => selectedRef.current === id;
       if (!id?.startsWith("SIM-")) {
-        if (onScreen()) setState((prev) => ({ ...prev, ticketStatus: status }));
-        return true;
+        notify("Archived tickets are read-only.", "info");
+        return false;
       }
       let previous: TicketStatus = "open";
       if (onScreen()) {

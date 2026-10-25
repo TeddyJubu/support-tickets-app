@@ -17,6 +17,7 @@ import { transaction } from "./db";
 import { createAlert, notifyOwners, siteUrl } from "./notify";
 import { isHttps, readCookie } from "./request-auth";
 import { getDb } from "./sim-db";
+import { getState, setState } from "./worker/state";
 import { normalizeShop, shopifyApiVersion, shopifyApp, shopifyConfig, shopifyQuery, shopPinned } from "./shopify";
 import {
   deleteConnection,
@@ -212,20 +213,39 @@ export interface ShopifyStatus {
   /** Store lookups are set up (Shopify may still refuse them) */
   active: boolean;
   connection: ShopifyConnection | null;
+  /** Most recent successful shop-metadata connection check for this connection */
+  lastSuccessfulCheckAt: string | null;
   /** What the app needs in Shopify's Dev Dashboard */
   setup: { appUrl: string; redirectUrl: string; webhookUrl: string; scopes: string[] };
 }
 
 export function shopifyStatus(user: StaffUser): ShopifyStatus {
   const pinnedShop = shopPinned() ? normalizeShop(process.env.SHOPIFY_SHOP) ?? process.env.SHOPIFY_SHOP?.trim() ?? null : null;
+  const connection = pinnedShop ? null : storedConnection();
+  const config = shopifyConfig();
+  const previousCheck = getState<{ shop?: string; connectedAt?: string | null }>("shopify_connection_check");
+  const checkMatches = !!config && previousCheck?.value.shop === config.shop &&
+    (config.source === "settings" ? (previousCheck.value.connectedAt ?? null) === (connection?.connectedAt ?? null) : previousCheck.value.connectedAt == null);
   return {
     canManage: user.role === "owner",
     appConfigured: !!shopifyApp(),
     pinnedShop,
-    active: !!shopifyConfig(),
-    connection: pinnedShop ? null : storedConnection(),
+    active: !!config,
+    connection,
+    lastSuccessfulCheckAt: checkMatches ? previousCheck?.updatedAt ?? null : null,
     setup: { appUrl: appUrl(), redirectUrl: callbackUrl(), webhookUrl: webhookUrl(), scopes: requiredScopes() },
   };
+}
+
+/** Authenticated, read-only check of Shopify shop metadata; never queries customers or orders. */
+export async function checkShopifyConnection() {
+  const config = shopifyConfig();
+  if (!config) throw new Error("No active Shopify store connection is available to check.");
+  const data = await shopifyQuery<{ shop?: { name?: string | null } | null }>(config, `query HelpdeskConnectionCheck { shop { name } }`);
+  if (!data.shop) throw new Error("Shopify didn't return shop metadata.");
+  const connection = config.source === "settings" ? storedConnection() : null;
+  setState("shopify_connection_check", { shop: config.shop, connectedAt: connection?.connectedAt ?? null });
+  return { shop: config.shop, shopName: data.shop.name?.trim().slice(0, 120) || null, checkedAt: new Date().toISOString() };
 }
 
 // --- Webhooks

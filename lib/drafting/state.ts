@@ -3,6 +3,7 @@
 
 import { isoFromSql } from "../db";
 import type { DatabaseSync } from "node:sqlite";
+import { normalizeLegacyStoreBrand } from "../kb/branding";
 
 export interface DraftInfo {
   id: number;
@@ -28,6 +29,8 @@ export interface DraftJobInfo {
   errorKind: string | null;
   runAfter: string | null;
   reason: string | null;
+  createdAt?: string | null;
+  startedAt?: string | null;
 }
 
 export interface AiDraftState {
@@ -47,7 +50,7 @@ const json = <T>(v: unknown, fallback: T): T => {
 
 export const toDraft = (r: Row): DraftInfo => ({
   id: Number(r.id),
-  body: String(r.body ?? ""),
+  body: normalizeLegacyStoreBrand(String(r.body ?? "")),
   action: r.action === "needs_staff" ? "needs_staff" : "reply",
   severity: String(r.severity),
   sensitive: Number(r.sensitive) === 1,
@@ -83,6 +86,8 @@ export function aiDraftState(d: DatabaseSync, ticketId: string): AiDraftState {
           errorKind: job.error_kind == null ? null : String(job.error_kind),
           runAfter: iso(job.run_after),
           reason: typeof detail.reason === "string" ? detail.reason : null,
+          createdAt: iso(job.created_at),
+          startedAt: iso(job.claimed_at),
         }
       : null,
   };

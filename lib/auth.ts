@@ -106,6 +106,13 @@ export function getUser(id: number) {
   return r ? toUser(r) : null;
 }
 
+export function updateDisplayName(id: number, displayName: string) {
+  const result = getDb()
+    .prepare(`UPDATE staff_users SET display_name = ? WHERE id = ? AND disabled_at IS NULL`)
+    .run(displayName, id);
+  return result.changes > 0 ? getUser(id) : null;
+}
+
 export function listUsers() {
   return (getDb().prepare(`SELECT * FROM staff_users ORDER BY username`).all() as Row[]).map((r) => ({
     ...toUser(r),

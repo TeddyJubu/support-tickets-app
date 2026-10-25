@@ -7,7 +7,7 @@ import { LoginForm } from "./login-form";
 export const dynamic = "force-dynamic";
 
 export function generateMetadata(): Metadata {
-  return { title: `Sign in · ${storeSettings().name} support` };
+  return { title: { absolute: `Sign in · ${storeSettings().name} support` } };
 }
 
 export default function LoginPage() {

@@ -1,6 +1,6 @@
 // Operations: encrypted backups and restore checks, the ops monitor, the overview.
 
-import { scratch, importApp, call } from "./helpers.mjs";
+import { scratch, importApp, call, staffSession } from "./helpers.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
 const simDb = await importApp("lib/sim-db.ts");
+const raw = new DatabaseSync(join(scratch, "sim.db"));
 const backup = await importApp("lib/ops/backup.ts");
 const monitor = await importApp("lib/ops/monitor.ts");
 const overviewRoute = await importApp("app/api/overview/route.ts");
@@ -93,6 +94,26 @@ test("overview returns every part, each on its own", async () => {
     assert.equal(r.json[k].ok, true, `${k}: ${r.json[k].error}`);
   }
   assert.equal(r.json.workload.data.byStatus.open >= 1, true);
+});
+
+test("overview gives automatic priority increases a reason and shows staff display names", async () => {
+  const id = simDb.createSimTicket({
+    customer: { sourceKey: "ops-priority-1", firstName: "Priority", lastName: "Test", email: "priority@customers.bb-sim.test" },
+    subject: "Urgent delivery issue",
+    body: "Please help",
+    priority: "high",
+  });
+  raw.prepare(`INSERT INTO audit_log (actor, action, ticket_id, detail) VALUES ('classifier', 'triage', ?, ?)`)
+    .run(id, JSON.stringify({ priority: "high", reason: "The classifier saw a legal threat." }));
+  const operator = await staffSession({ displayName: "Alex Support" });
+  raw.prepare(`INSERT INTO audit_log (actor, action, ticket_id, detail) VALUES (?, 'reply', ?, NULL)`)
+    .run(operator.user.username, id);
+
+  const r = await call(overviewRoute.GET);
+  const escalation = r.json.escalations.data.find((row) => row.id === id);
+  assert.equal(escalation.priorityReason, "The classifier saw a legal threat.");
+  const activity = r.json.activity.data.find((row) => row.ticketId === id && row.action === "reply");
+  assert.equal(activity.actor, "Alex Support");
 });
 
 // Off-site copies, against a local stand-in for the bucket that records every request

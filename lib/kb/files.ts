@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "../db";
+import { normalizeLegacyStoreBrand } from "./branding";
 
 export const kbDir = () => process.env.HELPDESK_KB_DIR || join(dataDir(), "kb");
 
@@ -65,10 +66,21 @@ export function parseFrontMatter(raw: string) {
 }
 
 export function parseArticle(path: string, raw: string, mtimeMs = 0): Article {
-  const { meta, body, tags } = parseFrontMatter(raw);
+  const normalizedRaw = normalizeLegacyStoreBrand(raw);
+  const { meta, body, tags } = parseFrontMatter(normalizedRaw);
   const folder = path.split("/")[0];
   const sensitiveFlag = /^(true|yes)$/i.test(meta.sensitive ?? "");
-  const title = (meta.title ?? "").replace(/^["']|["']$/g, "") || /^#\s+(.+)$/m.exec(body)?.[1]?.trim() || path;
+  const rawTitle = (meta.title ?? "").trim();
+  let title = rawTitle;
+  if (rawTitle.startsWith("'") && rawTitle.endsWith("'")) title = rawTitle.slice(1, -1).replace(/''/g, "'");
+  else if (rawTitle.startsWith('"') && rawTitle.endsWith('"')) {
+    try {
+      title = JSON.parse(rawTitle) as string;
+    } catch {
+      title = rawTitle.slice(1, -1);
+    }
+  }
+  title = title || /^#\s+(.+)$/m.exec(body)?.[1]?.trim() || path;
   return {
     path,
     folder,
@@ -77,7 +89,7 @@ export function parseArticle(path: string, raw: string, mtimeMs = 0): Article {
     tags,
     sensitive: sensitiveFlag || tags.some((t) => SENSITIVE_TAGS.has(t)),
     body,
-    raw,
+    raw: normalizedRaw,
     mtimeMs,
   };
 }

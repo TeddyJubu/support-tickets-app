@@ -2,7 +2,7 @@
 
 // Inbox list controls: view picker, filters, bulk actions, paging and the new-ticket dialog.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -126,20 +126,19 @@ export function FilterMenu() {
   const { filters, setFilters } = useDashboard();
   const { staff } = useSession();
   const [tags, setTags] = useState<Array<{ tag: string; count: number }> | null>(null);
+  const [open, setOpen] = useState(false);
   const active = ["priority", "assignee", "tag", "channel"].filter((k) => filters[k as keyof typeof filters]).length +
     (filters.sort !== "newest" ? 1 : 0);
   return (
-    <Popover
-      align="right"
-      panelClassName="w-64"
-      trigger={({ open, toggle }) => (
+    <div className="px-3 py-1">
         <button
           type="button"
           onClick={() => {
-            toggle();
+            setOpen((value) => !value);
             if (!tags) apiJson<{ tags: Array<{ tag: string; count: number }> }>("/api/helpdesk/tags").then((d) => setTags(d.tags)).catch(() => setTags([]));
           }}
           aria-expanded={open}
+          aria-controls="inbox-filters"
           title="Filter and sort"
           className={cn(
             "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium hover:bg-sidebar-accent",
@@ -147,12 +146,11 @@ export function FilterMenu() {
           )}
         >
           <SlidersHorizontal className="size-4" />
+          Filters &amp; sort
           {active > 0 && <span className="tabular-nums">{active}</span>}
         </button>
-      )}
-    >
-      {() => (
-        <div className="py-1">
+      {open && (
+        <div id="inbox-filters" className="mt-1 grid max-h-60 grid-cols-2 overflow-y-auto rounded-lg border border-border bg-muted/30 py-1">
           <Select
             label="Priority"
             value={filters.priority}
@@ -183,13 +181,12 @@ export function FilterMenu() {
           />
           {active > 0 && (
             <>
-              <MenuDivider />
-              <MenuItem icon={X} label="Clear filters" onSelect={() => setFilters(null)} />
+              <button type="button" className="col-span-2 px-3 py-2 text-left text-xs font-medium text-primary hover:bg-accent" onClick={() => setFilters(null)}>Clear filters</button>
             </>
           )}
         </div>
       )}
-    </Popover>
+    </div>
   );
 }
 
@@ -305,18 +302,27 @@ export function Pager() {
   if (!ticketTotal) return null;
   const from = page * PAGE_SIZE + 1;
   const to = page * PAGE_SIZE + tickets.length;
+  const pages = Math.ceil(ticketTotal / PAGE_SIZE);
   return (
     <div className="flex items-center gap-1 border-t border-sidebar-border px-3 py-1.5 text-xs text-muted-foreground">
       <span className="tabular-nums">
         {from.toLocaleString()}–{to.toLocaleString()} of {ticketTotal.toLocaleString()}
       </span>
       {ticketsLoading && <Loader2 className="size-3.5 animate-spin" />}
+      <label className="ml-auto inline-flex items-center gap-1">
+        Page
+        <input key={page} aria-label="Jump to page" type="number" min={1} max={pages} defaultValue={page + 1}
+          disabled={ticketsLoading} className="w-14 rounded border border-input bg-background px-1 py-1 text-foreground"
+          onKeyDown={(e) => { if (e.key === "Enter") { const value = Number(e.currentTarget.value); if (Number.isInteger(value) && value >= 1 && value <= pages) setPage(value - 1); } }}
+          onBlur={(e) => { const value = Number(e.currentTarget.value); if (Number.isInteger(value) && value >= 1 && value <= pages && value !== page + 1) setPage(value - 1); }} />
+        <span title={`${pages.toLocaleString()} pages`}>/ {pages.toLocaleString()}</span>
+      </label>
       <button
         type="button"
         aria-label="Previous page"
         disabled={page === 0 || ticketsLoading}
         onClick={() => setPage(page - 1)}
-        className="ml-auto inline-flex size-7 items-center justify-center rounded-md hover:bg-sidebar-accent disabled:opacity-30"
+        className="inline-flex size-7 items-center justify-center rounded-md hover:bg-sidebar-accent disabled:opacity-30"
       >
         <ChevronLeft className="size-4" />
       </button>
@@ -333,11 +339,14 @@ export function Pager() {
   );
 }
 
-export function NewTicketButton() {
+export function NewTicketButton({ onCreated }: { onCreated?: () => void } = {}) {
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
   return (
     <>
       <button
+        ref={trigger}
         type="button"
         onClick={() => setOpen(true)}
         title="New ticket"
@@ -346,23 +355,55 @@ export function NewTicketButton() {
       >
         <Plus className="size-4" />
       </button>
-      {open && <NewTicketDialog onClose={() => setOpen(false)} />}
+      {open && <NewTicketDialog onClose={close} onCreated={onCreated} returnFocus={trigger} />}
     </>
   );
 }
 
-function NewTicketDialog({ onClose }: { onClose: () => void }) {
+function NewTicketDialog({ onClose, onCreated, returnFocus }: { onClose: () => void; onCreated?: () => void; returnFocus: { current: HTMLButtonElement | null } }) {
   const { createTicket } = useDashboard();
   const [form, setForm] = useState({ email: "", name: "", subject: "", note: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const first = useRef<HTMLInputElement>(null);
+  const dialog = useRef<HTMLFormElement>(null);
   useEffect(() => {
+    const returnTarget = returnFocus.current;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     first.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    const onTrapTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialog.current) return;
+      const focusable = Array.from(dialog.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0);
+      if (!focusable.length) {
+        e.preventDefault();
+        dialog.current.focus();
+        return;
+      }
+      const firstFocusable = focusable[0];
+      const lastFocusable = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey ? active === firstFocusable || !dialog.current.contains(active) : active === lastFocusable || !dialog.current.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? lastFocusable : firstFocusable).focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    document.addEventListener("keydown", onTrapTab);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onTrapTab);
+      const target = previouslyFocused?.isConnected ? previouslyFocused : returnTarget;
+      target?.focus();
+    };
+  }, [onClose, returnFocus]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -371,7 +412,10 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     const id = await createTicket(form);
     setBusy(false);
-    if (id) onClose();
+    if (id) {
+      onClose();
+      onCreated?.();
+    }
   };
   const field = (key: keyof typeof form) => ({
     value: form[key],
@@ -383,20 +427,24 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
   const input = "mt-1 block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-3 focus:ring-ring/20";
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-background/60 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-background/60 p-3 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <form
+        ref={dialog}
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-ticket-title"
-        className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-pop"
+        tabIndex={-1}
+        className="flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full max-w-md flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-pop"
         noValidate
       >
-        <h2 id="new-ticket-title" className="text-base font-semibold text-foreground">New ticket</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Opens an email ticket for a customer. Write your first email to them in the reply box once it&apos;s created.
-        </p>
-        <div className="mt-4 space-y-3">
+        <div className="shrink-0 px-6 pt-6">
+          <h2 id="new-ticket-title" className="text-base font-semibold text-foreground">New ticket</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Opens an email ticket for a customer. Write your first email to them in the reply box once it&apos;s created.
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-4" data-dialog-scroll-region>
           <label className="block text-sm font-medium text-foreground">
             Customer email
             <input ref={first} type="email" autoComplete="off" className={input} {...field("email")} />
@@ -413,13 +461,13 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
             Internal note <span className="font-normal text-muted-foreground">(optional, never sent)</span>
             <textarea rows={3} className={input} maxLength={10000} {...field("note")} />
           </label>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
         </div>
-        {error && (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border px-6 py-3">
           <button type="button" onClick={onClose} className="h-9 rounded-lg px-3 text-sm font-medium text-foreground ring-1 ring-border hover:bg-accent">
             Cancel
           </button>
