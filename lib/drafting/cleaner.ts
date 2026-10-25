@@ -77,7 +77,9 @@ const ACTION_CLAIM = new RegExp(
 const INTERNAL_TALK = new RegExp(
   [
     `\\b(?:in|on|to)\\s+(?:this|the|your)\\s+(?:ticket|case\\s+notes|internal\\s+notes)\\b`,
-    `\\bwhoever\\s+(?:picks|takes|handles|reads|gets)\\b`,
+    `\\bwhoever\\s+(?:picks|takes|handles|reads|gets|helps|looks|works|answers|is\\s+on)\\b`,
+    // "this ticket's history", "the ticket notes", "your ticket number": the helpdesk system itself
+    `\\b(?:this|the|your)\\s+ticket(?:['’]s|\\s+(?:history|notes?|thread|record|log|number|details))\\b`,
     `\\bfrom\\s+my\\s+(?:side|end)\\b`,
     `\\bi\\s+(?:don['’]t|do\\s+not)\\s+have\\s+access\\b`,
     `\\bi\\s*(?:can['’]t|cannot|am\\s+not\\s+able\\s+to|['’]m\\s+not\\s+able\\s+to|am\\s+unable\\s+to)\\s+(?:see|access|view|look\\s+up|pull\\s+up)\\b`,

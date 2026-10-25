@@ -545,6 +545,8 @@ test("cleaner holds back talk about the ticket or the AI's own access", () => {
     "I'm not able to confirm the refund details or redirect the money from here.",
     "I can't change the ship date myself.",
     "Your order number is already in this ticket.",
+    "Your husband is welcome to call tomorrow, and this ticket's history will be right there for whoever helps you.",
+    "The ticket notes show everything you sent.",
   ]) {
     const r = cleanDraft(`Hi,\n\n${talk}`, false);
     assert.equal(r.suppressed, true, talk);
@@ -554,6 +556,8 @@ test("cleaner holds back talk about the ticket or the AI's own access", () => {
     "We handle everything by email in this thread so nothing gets lost.",
     "You can see the tracking in your shipping email.",
     "On our end, orders ship within two days.",
+    "Whoever ordered the gift can share the tracking link with you.",
+    "Your ticket to the show is not something we sell.",
     "We can't confirm a delivery date, since that's up to the carrier.",
     "I can't confirm a restock date yet, but we'll follow up.",
   ]) {
