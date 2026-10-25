@@ -17,6 +17,7 @@ const BOB = "gid://shopify/Customer/202";
 const JO = "gid://shopify/Customer/303";
 const money = (amount, currencyCode = "USD") => ({ shopMoney: { amount, currencyCode } });
 const order = (name, customerId, extra = {}) => ({
+  id: `gid://shopify/Order/${name.slice(1)}`,
   name,
   createdAt: "2026-10-10T15:00:00Z",
   cancelledAt: null,
@@ -24,8 +25,16 @@ const order = (name, customerId, extra = {}) => ({
   displayFulfillmentStatus: "UNFULFILLED",
   currencyCode: "USD",
   totalPriceSet: money("89.00"),
+  subtotalPriceSet: money("80.00"),
+  totalShippingPriceSet: money("4.00"),
+  totalTaxSet: money("5.00"),
+  totalDiscountsSet: money("9.00"),
   customer: { id: customerId },
-  lineItems: { nodes: [{ title: "Tulle Dress - 4T", quantity: 1, sku: "TD4", originalUnitPriceSet: money("89.00") }] },
+  lineItems: { nodes: [{
+    title: "Tulle Dress - 4T", quantity: 1, sku: "TD4", variantTitle: "Pink / 4T",
+    image: { url: "https://cdn.shopify.com/dress.png", altText: "Pink tulle dress" },
+    originalUnitPriceSet: money("89.00"), discountedTotalSet: money("80.00"),
+  }], pageInfo: { hasNextPage: false, endCursor: null } },
   fulfillments: [],
   refunds: [],
   ...extra,
@@ -74,13 +83,21 @@ function answer(query, vars) {
         firstName: c.firstName,
         lastName: c.lastName,
         defaultEmailAddress: { emailAddress: c.email },
+        defaultPhoneNumber: { phoneNumber: "+1 555 0100" },
         defaultAddress: { city: "Newark", provinceCode: "NJ", countryCodeV2: "US" },
         numberOfOrders: String(own.length),
-        amountSpent: money("178.00"),
+        amountSpent: { amount: "178.00", currencyCode: "USD" },
         createdAt: "2025-01-01T00:00:00Z",
         orders: { nodes: [...own, stray] },
       },
     };
+  }
+  if (/OrderItems/.test(query)) {
+    const found = ORDERS.find((o) => o.id === vars.id);
+    return { order: found ? {
+      name: found.name, customer: { id: fake.pageOwner ?? found.customer.id },
+      lineItems: { nodes: [{ title: "Last product", quantity: 1, sku: "LAST", image: null, originalUnitPriceSet: money("5.00") }], pageInfo: { hasNextPage: false, endCursor: "last" } },
+    } : null };
   }
   if (/OrdersByName/.test(query)) {
     const want = /^name:"#?(.+)"$/.exec(vars.query)?.[1]?.toLowerCase();
@@ -113,7 +130,7 @@ const calls = () => fake.requests.length;
 
 const simDb = await importApp("lib/sim-db.ts");
 const { railForTicket, orderForTicket } = await importApp("lib/store.ts");
-const { shopifyConfig, shopifyQuery, resetShopifyToken, findCustomerIdByEmail, DEFAULT_API_VERSION } = await importApp("lib/shopify.ts");
+const { shopifyConfig, shopifyQuery, resetShopifyToken, findCustomerIdByEmail, getOrderForCustomer, toRailOrder, DEFAULT_API_VERSION } = await importApp("lib/shopify.ts");
 const { runTool } = await importApp("lib/drafting/tools.ts");
 const { returnsForTicket } = await importApp("lib/returns.ts");
 const simTickets = await importApp("app/api/helpdesk/sim/tickets/route.ts");
@@ -176,6 +193,15 @@ test("the rail shows the verified sender's own Shopify customer and orders", asy
   assert.equal(rail.snapshot.matchedOrder.name, "#1001");
   assert.equal(rail.snapshot.matchedOrder.payment, "paid");
   assert.equal(rail.snapshot.matchedOrder.items[0].price, 89);
+  assert.deepEqual(rail.snapshot.matchedOrder.items[0].image, { url: "https://cdn.shopify.com/dress.png", alt: "Pink tulle dress" });
+  assert.equal(rail.snapshot.matchedOrder.items[0].variant, "Pink / 4T");
+  assert.equal(rail.snapshot.matchedOrder.items[0].lineTotal, 80);
+  assert.equal(rail.snapshot.matchedOrder.subtotal, 80);
+  assert.equal(rail.snapshot.matchedOrder.shipping, 4);
+  assert.equal(rail.snapshot.matchedOrder.tax, 5);
+  assert.equal(rail.snapshot.matchedOrder.discounts, 9);
+  assert.equal(rail.snapshot.customer.phone, "+1 555 0100");
+  assert.equal(rail.snapshot.customer.currency, "USD");
   assert.deepEqual(rail.snapshot.orders.map((o) => o.name), ["#1001", "#1000"], "another customer's stray order is dropped");
   assert.equal(fake.tokens - tokens, 1, "signed in once");
 });
@@ -288,6 +314,37 @@ test("amounts Shopify doesn't return stay 'unavailable', never $0", async () => 
   assert.equal(tool.total, "unavailable");
   assert.equal(tool.refunded, "unavailable");
   assert.deepEqual(tool.items, ["2× Bib (unavailable)"]);
+});
+
+test("order product pagination checks ownership on every page", async () => {
+  const original = ORDERS[0].lineItems.pageInfo;
+  ORDERS[0].lineItems.pageInfo = { hasNextPage: true, endCursor: "preview" };
+  try {
+    const { id } = email();
+    const preview = await railForTicket(id);
+    assert.equal(preview.snapshot.matchedOrder.itemsTruncated, true);
+    const complete = await orderForTicket(id, "#1001");
+    assert.equal(complete.order.itemsTruncated, false);
+    assert.equal(complete.order.items.at(-1).title, "Last product");
+    fake.pageOwner = BOB;
+    assert.equal(await getOrderForCustomer(shopifyConfig(), ANN, "#1001"), null, "a different owner's page is never returned");
+  } finally {
+    ORDERS[0].lineItems.pageInfo = original;
+    fake.pageOwner = null;
+  }
+});
+
+test("missing or unsafe product images and prices remain unavailable", () => {
+  const result = toRailOrder(order("#test", ANN, {
+    lineItems: { nodes: [{ title: "Unknown item", quantity: 2, image: { url: "javascript:alert(1)" }, originalUnitPriceSet: null, discountedTotalSet: null }] },
+    totalRefundedSet: money("100.00"),
+    refunds: [{ totalRefundedSet: money("5.00") }],
+  }));
+  assert.equal(result.items[0].image, null);
+  assert.equal(result.items[0].price, null);
+  assert.equal(result.items[0].lineTotal, null);
+  assert.equal(result.items[0].variant, null);
+  assert.equal(result.refunded, 100, "the order's total refund is not limited to the first five refund records");
 });
 
 test("get_order gives the drafter only what a reply needs", async () => {

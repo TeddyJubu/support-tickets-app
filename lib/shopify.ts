@@ -168,8 +168,17 @@ export async function shopifyQuery<T>(config: ShopifyConfig, query: string, vari
   }
 }
 
-// Kept small enough that ten orders stay well under Shopify's 1,000-point query cost limit
+// Preview five products per order to bound the initial query cost.
+// The ticket-scoped order lookup loads the remaining products on request.
+const LINE_ITEM_FIELDS = `
+  title quantity sku variantTitle
+  image { url(transform: { maxWidth: 240, maxHeight: 240 }) altText }
+  originalUnitPriceSet { shopMoney { amount } }
+  discountedTotalSet(withCodeDiscounts: true) { shopMoney { amount } }
+`;
+
 const ORDER_FIELDS = `
+  id
   name
   createdAt
   cancelledAt
@@ -177,8 +186,13 @@ const ORDER_FIELDS = `
   displayFulfillmentStatus
   currencyCode
   totalPriceSet { shopMoney { amount currencyCode } }
+  subtotalPriceSet { shopMoney { amount } }
+  totalShippingPriceSet { shopMoney { amount } }
+  totalTaxSet { shopMoney { amount } }
+  totalDiscountsSet { shopMoney { amount } }
+  totalRefundedSet { shopMoney { amount } }
   customer { id }
-  lineItems(first: 20) { nodes { title quantity sku originalUnitPriceSet { shopMoney { amount } } } }
+  lineItems(first: 5) { pageInfo { hasNextPage endCursor } nodes { ${LINE_ITEM_FIELDS} } }
   fulfillments(first: 5) { status displayStatus createdAt trackingInfo(first: 2) { company number } }
   refunds(first: 5) { createdAt note totalRefundedSet { shopMoney { amount } } }
 `;
@@ -193,11 +207,12 @@ const CUSTOMER_WITH_ORDERS = `query CustomerWithOrders($id: ID!) {
     firstName
     lastName
     defaultEmailAddress { emailAddress }
+    defaultPhoneNumber { phoneNumber }
     defaultAddress { city provinceCode countryCodeV2 }
     numberOfOrders
     amountSpent { amount currencyCode }
     createdAt
-    orders(first: 10, sortKey: CREATED_AT, reverse: true) { nodes { ${ORDER_FIELDS} } }
+    orders(first: 10, sortKey: CREATED_AT, reverse: true) { pageInfo { hasNextPage } nodes { ${ORDER_FIELDS} } }
   }
 }`;
 
@@ -205,8 +220,25 @@ const ORDERS_BY_NAME = `query OrdersByName($query: String!) {
   orders(first: 5, query: $query) { nodes { ${ORDER_FIELDS} } }
 }`;
 
+const ORDER_ITEMS = `query OrderItems($id: ID!, $cursor: String!) {
+  order(id: $id) {
+    name customer { id }
+    lineItems(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { ${LINE_ITEM_FIELDS} } }
+  }
+}`;
+
 type Money = { amount?: string | null; currencyCode?: string | null } | null | undefined;
+type LineItemNode = {
+  title?: string | null;
+  quantity?: number | null;
+  sku?: string | null;
+  variantTitle?: string | null;
+  image?: { url?: string | null; altText?: string | null } | null;
+  originalUnitPriceSet?: { shopMoney?: Money } | null;
+  discountedTotalSet?: { shopMoney?: Money } | null;
+};
 type OrderNode = {
+  id?: string;
   name: string;
   createdAt?: string | null;
   cancelledAt?: string | null;
@@ -215,7 +247,12 @@ type OrderNode = {
   currencyCode?: string | null;
   totalPriceSet?: { shopMoney?: Money } | null;
   customer?: { id?: string | null } | null;
-  lineItems?: { nodes?: Array<{ title?: string | null; quantity?: number | null; sku?: string | null; originalUnitPriceSet?: { shopMoney?: Money } | null }> };
+  subtotalPriceSet?: { shopMoney?: Money } | null;
+  totalShippingPriceSet?: { shopMoney?: Money } | null;
+  totalTaxSet?: { shopMoney?: Money } | null;
+  totalDiscountsSet?: { shopMoney?: Money } | null;
+  totalRefundedSet?: { shopMoney?: Money } | null;
+  lineItems?: { nodes?: LineItemNode[]; pageInfo?: { hasNextPage: boolean; endCursor?: string | null } };
   fulfillments?: Array<{ status?: string | null; displayStatus?: string | null; createdAt?: string | null; trackingInfo?: Array<{ company?: string | null; number?: string | null }> }>;
   refunds?: Array<{ createdAt?: string | null; note?: string | null; totalRefundedSet?: { shopMoney?: Money } | null }>;
 };
@@ -224,14 +261,15 @@ type CustomerNode = {
   firstName?: string | null;
   lastName?: string | null;
   defaultEmailAddress?: { emailAddress?: string | null } | null;
+  defaultPhoneNumber?: { phoneNumber?: string | null } | null;
   defaultAddress?: { city?: string | null; provinceCode?: string | null; countryCodeV2?: string | null } | null;
   numberOfOrders?: string | number | null;
   amountSpent?: Money;
   createdAt?: string | null;
-  orders?: { nodes?: OrderNode[] };
+  orders?: { nodes?: OrderNode[]; pageInfo?: { hasNextPage: boolean } };
 };
 
-const n = (v: unknown) => (v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v));
+const n = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 const s = (v: unknown) => (v == null || v === "" ? null : String(v));
 /** PARTIALLY_REFUNDED → "partially refunded", the wording the panel shows */
 const label = (v: unknown) => (v == null || v === "" ? null : String(v).toLowerCase().replace(/_/g, " "));
@@ -246,11 +284,19 @@ export function toRailOrder(o: OrderNode): RailOrder {
     payment: label(o.displayFinancialStatus),
     fulfillment: label(o.displayFulfillmentStatus),
     cancelledAt: s(o.cancelledAt),
+    subtotal: n(o.subtotalPriceSet?.shopMoney?.amount),
+    shipping: n(o.totalShippingPriceSet?.shopMoney?.amount),
+    tax: n(o.totalTaxSet?.shopMoney?.amount),
+    discounts: n(o.totalDiscountsSet?.shopMoney?.amount),
+    itemsTruncated: o.lineItems?.pageInfo?.hasNextPage ?? false,
     items: (o.lineItems?.nodes ?? []).map((l) => ({
       title: String(l.title ?? ""),
       quantity: Number(l.quantity ?? 1),
       price: n(l.originalUnitPriceSet?.shopMoney?.amount),
       sku: s(l.sku),
+      variant: s(l.variantTitle),
+      image: l.image?.url && /^https:\/\//i.test(l.image.url) ? { url: l.image.url, alt: s(l.image.altText) } : null,
+      lineTotal: n(l.discountedTotalSet?.shopMoney?.amount),
     })),
     shipments: (o.fulfillments ?? []).map((f) => ({
       status: label(f.status),
@@ -260,7 +306,7 @@ export function toRailOrder(o: OrderNode): RailOrder {
     })),
     refunds,
     // One refund with an unknown amount makes the total unknown ("unavailable"), never $0
-    refunded: refunds.some((r) => r.amount === null) ? null : refunds.reduce((sum, r) => sum + (r.amount ?? 0), 0),
+    refunded: "totalRefundedSet" in o ? n(o.totalRefundedSet?.shopMoney?.amount) : refunds.some((r) => r.amount === null) ? null : refunds.reduce((sum, r) => sum + (r.amount ?? 0), 0),
   };
 }
 
@@ -272,6 +318,9 @@ export interface ShopifyCustomer {
   id: string;
   name: string;
   email: string | null;
+  phone: string | null;
+  currency: string | null;
+  ordersTruncated: boolean;
   location: string | null;
   ordersCount: number | null;
   totalSpent: number | null;
@@ -299,6 +348,9 @@ export async function getCustomerWithOrders(config: ShopifyConfig, customerId: s
     id: c.id,
     name: [c.firstName, c.lastName].filter(Boolean).join(" ") || email || "Customer",
     email,
+    phone: s(c.defaultPhoneNumber?.phoneNumber),
+    currency: s(c.amountSpent?.currencyCode),
+    ordersTruncated: c.orders?.pageInfo?.hasNextPage ?? false,
     location: [c.defaultAddress?.city, c.defaultAddress?.provinceCode, c.defaultAddress?.countryCodeV2].filter(Boolean).join(", ") || null,
     ordersCount: n(c.numberOfOrders),
     totalSpent: n(c.amountSpent?.amount),
@@ -313,5 +365,17 @@ export async function getOrderForCustomer(config: ShopifyConfig, customerId: str
   if (!searchable(want) || want.length > 40) return null;
   const data = await shopifyQuery<{ orders?: { nodes?: OrderNode[] } }>(config, ORDERS_BY_NAME, { query: `name:"${want}"` });
   const order = (data.orders?.nodes ?? []).find((o) => sameName(o.name, want) && o.customer?.id === customerId);
-  return order ? toRailOrder(order) : null;
+  if (!order) return null;
+  // Only paginate an order after its ownership was checked. Each subsequent page
+  // is checked again before its products can enter the ticket's response.
+  for (let page = 0; order.id && order.lineItems?.pageInfo?.hasNextPage && page < 10; page++) {
+    const cursor = order.lineItems.pageInfo.endCursor;
+    if (!cursor) break;
+    const next = await shopifyQuery<{ order?: OrderNode | null }>(config, ORDER_ITEMS, { id: order.id, cursor });
+    if (!next.order || next.order.customer?.id !== customerId || !sameName(next.order.name, want)) return null;
+    const connection = next.order.lineItems;
+    order.lineItems = { nodes: [...(order.lineItems.nodes ?? []), ...(connection?.nodes ?? [])], pageInfo: connection?.pageInfo };
+    if (connection?.pageInfo?.endCursor === cursor) break;
+  }
+  return toRailOrder(order);
 }

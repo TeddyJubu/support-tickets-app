@@ -107,7 +107,7 @@ test("copilot names its input and selected ticket; simulator never claims zero s
   await asked;
   await expect(page.getByRole("heading", { name: "Investigate this ticket" })).toHaveCount(0);
   await expect(page.getByLabel("Ask the copilot about this ticket")).toBeVisible();
-  await page.getByRole("tab", { name: "Customer", exact: true }).click();
+  await page.getByRole("tab", { name: "Details", exact: true }).click();
   await expect(page.getByText(/Store orders and lifetime spend are unavailable for simulated customers/)).toBeVisible();
   await expect(page.getByText("$0.00", { exact: true })).toHaveCount(0);
   await expect(page.getByText("No orders", { exact: true })).toHaveCount(0);

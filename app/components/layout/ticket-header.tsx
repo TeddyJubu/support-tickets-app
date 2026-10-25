@@ -292,13 +292,19 @@ export function TicketHeader() {
           )}
 
           <div className="ml-1 flex items-center gap-0.5 border-l border-border pl-2">
-            <IconButton
-              label="Customer details"
-              active={sidePanel === "customer"}
+            <button
+              type="button"
+              aria-expanded={sidePanel === "customer"}
+              aria-controls="ticket-side-panel"
               onClick={() => setSidePanel(sidePanel === "customer" ? null : "customer")}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium ring-1 ring-border transition-colors hover:bg-accent",
+                sidePanel === "customer" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
             >
               <UserRound className="size-4" />
-            </IconButton>
+              Details
+            </button>
             <IconButton
               label="AI copilot"
               active={sidePanel === "copilot"}

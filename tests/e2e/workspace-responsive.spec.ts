@@ -26,14 +26,19 @@ test("phone inbox opens a full conversation and preserves a draft when returning
   await row.click();
   await expect(reply).toHaveValue("Keep this unsent draft while I check the ticket list.");
 
-  await page.getByRole("button", { name: "Customer details", exact: true }).click();
+  const detailsButton = page.locator("header").getByRole("button", { name: "Details", exact: true });
+  await expect(detailsButton).toHaveAttribute("aria-expanded", "false");
+  await expect(detailsButton).toHaveAttribute("aria-controls", "ticket-side-panel");
+  await detailsButton.click();
+  await expect(detailsButton).toHaveAttribute("aria-expanded", "true");
   const panel = page.getByRole("dialog", { name: "Ticket side panel", exact: true });
   await expect(panel).toBeVisible();
   await page.keyboard.press("Shift+Tab");
   expect(await panel.evaluate((element) => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
-  await expect(page.getByRole("button", { name: "Customer details", exact: true })).toBeFocused();
+  await expect(detailsButton).toHaveAttribute("aria-expanded", "false");
+  await expect(detailsButton).toBeFocused();
 });
 
 test("phone notification links open their conversation directly", async ({ page }) => {
