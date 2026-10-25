@@ -74,6 +74,17 @@ const PLACEHOLDER = /^[\s"'`([{<]*(?:placeholder|tbd|todo|n\/?a|\.{3}|…|lorem 
 export const isPlaceholder = (text: string | null) => !!text && PLACEHOLDER.test(text.trim());
 /** A real email has a greeting and a sentence; fewer than this many letters isn't one */
 const MIN_DRAFT_LETTERS = 12;
+// The model narrating its own steps instead of writing the email ("Searching the knowledge base for…")
+const NARRATION = /^(?:let me |i(?:['’]ll| will| am|['’]m) (?:now )?|now )?(?:search(?:ing)?|look(?:ing)? up|check(?:ing)?|call(?:ing)?|us(?:e|ing)|query(?:ing)?|consult(?:ing)?|review(?:ing)?)\b[^\n]{0,100}\b(?:knowledge[- ]base|kb|search_kb|get_order|get_returns|get_customer_tickets|tools?|database)\b/i;
+// An email opens with a greeting ("Hi Ana,", "שלום צפורה,"); without one it needs at least two sentences
+const GREETING = /^(?:hi|hello|hey|dear|good (?:morning|afternoon|evening)|shalom|mazel tov|congratulations|thank you|thanks)\b|,\s*$/i;
+export function isStubDraft(draft: string) {
+  const lines = draft.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return false;
+  if (NARRATION.test(lines[0])) return true;
+  const sentences = (draft.match(/[.!?](?=\s|$)/g) ?? []).length;
+  return !GREETING.test(lines[0]) && sentences < 2;
+}
 
 /** Pulls the draft and verdict out of the model's answer; several verdicts merge to the most cautious */
 export function extract(answer: string, token: string): Extracted {
@@ -96,5 +107,6 @@ export function extract(answer: string, token: string): Extracted {
   if (verdict.action === "reply" && !draft) return { ok: false, error: "The AI said it drafted a reply but sent none" };
   if (isPlaceholder(draft) || isPlaceholder(verdict.staffNextStep)) return { ok: false, error: "The AI returned placeholder text instead of a reply" };
   if (draft && (draft.match(/\p{L}/gu) ?? []).length < MIN_DRAFT_LETTERS) return { ok: false, error: "The AI's draft was too short to be a real reply" };
+  if (draft && isStubDraft(draft)) return { ok: false, error: "The AI described its own steps instead of writing the email to the customer: write the full reply, starting with a greeting" };
   return { ok: true, draft, verdict };
 }

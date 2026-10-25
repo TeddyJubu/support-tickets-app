@@ -299,7 +299,7 @@ test("a customer message arriving mid-draft makes the draft stale", async () => 
 
 test("a timed-out job doesn't save a late draft", async () => {
   clearQueue();
-  fakeAi((t) => wrap(t, "Late reply about your order"));
+  fakeAi((t) => wrap(t, "Hi,\n\nLate reply about your order."));
   const id = ticket("Slow one, where is my order");
   const job = queue.claimNextJob(db, "t");
   queue.failJob(db, job.id, "transient", "timed out"); // what the timeout path does
@@ -570,4 +570,24 @@ test("a draft that talks about the ticket gets one rephrase turn", async () => {
   });
   assert.match(detail.ai.draft.body, /check the tracking/);
   assert.ok(detail.ai.draft.flags.some((f) => f.includes("rephrased to remove talk about the ticket")));
+});
+
+test("drafts that narrate the AI's steps or have no greeting and real content aren't accepted", () => {
+  const t = markersMod.newRunToken();
+  for (const draft of [
+    "Searching the knowledge base for exchange policy and timing.\n\nCute Things Support",
+    "Let me check the knowledge base for the return policy.",
+    "I'll look up the order with get_order now.",
+    "Checking the order status.",
+  ]) {
+    assert.equal(markersMod.extract(wrap(t, draft), t).ok, false, draft);
+  }
+  for (const draft of [
+    "Hi Ana,\n\nOrders ship within two days.",
+    "שלום צפורה,\n\nההזמנה תצא תוך יומיים.",
+    "Thanks for writing in. Orders ship within two days.",
+    "Hi,\n\nChecking the knowledge base we keep is easy: just reply here.",
+  ]) {
+    assert.equal(markersMod.extract(wrap(t, draft), t).ok, true, draft);
+  }
 });
