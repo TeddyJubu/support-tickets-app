@@ -449,3 +449,36 @@ test("only read queries go to Shopify, and only to the configured shop", async (
     if (r.body?.query) assert.doesNotMatch(r.body.query, /\b(mutation|subscription)\b/i);
   }
 });
+
+test("a simulated ticket can link a catalog product; staff see its catalog facts and the drafter gets them", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { join } = await import("node:path");
+  const { scratch } = await import("./helpers.mjs");
+  const db = new DatabaseSync(join(scratch, "helpdesk.db"));
+  db.exec(`CREATE TABLE IF NOT EXISTS products (handle TEXT, title TEXT, vendor TEXT, category TEXT, type TEXT, tags TEXT, status TEXT,
+    published INTEGER, description TEXT, image TEXT, price_min REAL, price_max REAL, compare_at_max REAL, variant_count INTEGER,
+    inventory INTEGER, options TEXT, final_sale INTEGER)`);
+  db.prepare(`INSERT INTO products VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    "rompp-cable-knit-green", "Rompp Cable Knit 2 Piece-Green", "Rompp", null, "Set", "", "active", 1, "", "https://cdn.shopify.com/x.webp",
+    38.99, 38.99, null, 4, 5, "Size: 12M, 18M, 24M", 0,
+  );
+  db.close();
+
+  const r = await open({ productHandle: "rompp-cable-knit-green", orderName: null });
+  assert.equal(r.status, 201);
+  assert.equal(r.json.ticket.productHandle, "rompp-cable-knit-green");
+  assert.equal((await open({ productHandle: "../../etc/passwd", orderName: null })).status, 400);
+
+  const products = await importApp("app/api/helpdesk/products/route.ts");
+  const staff = await staffSession();
+  const found = await call(products.GET, { url: "http://test/api/helpdesk/products?handle=rompp-cable-knit-green", headers: { cookie: staff.cookie } });
+  assert.equal(found.status, 200);
+  assert.equal(found.json.product.title, "Rompp Cable Knit 2 Piece-Green");
+  assert.equal(found.json.product.priceMin, 38.99);
+  assert.equal((await call(products.GET, { url: "http://test/api/helpdesk/products?handle=nope", headers: { cookie: staff.cookie } })).status, 404);
+  assert.equal((await call(products.GET, { url: "http://test/api/helpdesk/products?handle=rompp-cable-knit-green" })).status, 401);
+
+  const { productPrompt } = await importApp("lib/drafting/run.ts");
+  assert.match(productPrompt("rompp-cable-knit-green"), /Rompp Cable Knit 2 Piece-Green by Rompp[\s\S]*\$38\.99[\s\S]*Size: 12M/);
+  assert.match(productPrompt(null), /No catalog product/);
+});

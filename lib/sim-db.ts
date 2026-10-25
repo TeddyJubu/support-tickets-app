@@ -90,6 +90,7 @@ function toTicket(r: Row): Ticket {
     customerType: null,
     automated: false,
     orderName: s(r.order_name),
+    productHandle: s(r.product_handle),
     sourceTicketId: s(r.source_ticket_id),
   };
 }
@@ -330,6 +331,8 @@ export interface SimTicketInput {
   aiIntent?: string | null;
   orderName?: string | null;
   orderId?: string | null;
+  /** Simulated tickets: the catalog product the customer writes about */
+  productHandle?: string | null;
   sourceTicketId?: string | null;
   runId?: string | null;
   channel?: "simulator" | "email" | "staff";
@@ -362,12 +365,13 @@ export function createSimTicket(input: SimTicketInput) {
     const res = d
       .prepare(
         `INSERT INTO sim_tickets (customer_id, subject, priority, tags, ai_intent, order_name, order_id,
-           source_ticket_id, run_id, channel, assignee_id, sender_verified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+           source_ticket_id, run_id, channel, assignee_id, sender_verified, product_handle) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         customerId, input.subject, input.priority ?? "normal", input.tags ?? null, input.aiIntent ?? null,
         input.orderName ?? null, input.orderId ?? null, input.sourceTicketId ?? null, input.runId ?? null,
         channel, input.assigneeId ?? null, input.senderVerified == null ? null : input.senderVerified ? 1 : 0,
+        input.productHandle ?? null,
       );
     const id = `SIM-${1000 + Number(res.lastInsertRowid)}`;
     d.prepare(`UPDATE sim_tickets SET id = ? WHERE seq = ?`).run(id, Number(res.lastInsertRowid));

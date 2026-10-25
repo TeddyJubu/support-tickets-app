@@ -2,6 +2,7 @@ import { createSimTicket, getDb, getSimTicketDetail, type SimTicketInput } from 
 import { createSimReturn, type SimReturnInput } from "@/lib/returns";
 import { transaction } from "@/lib/db";
 import { isSimulatorRequest, unauthorized } from "@/lib/sim-auth";
+import { isProductHandle } from "@/lib/helpdesk-db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,9 @@ export async function POST(request: Request) {
   // Email customer keys belong to real senders: a simulated ticket can't file under one
   if (String(body.customer.sourceKey).startsWith("email:")) {
     return Response.json({ error: "customer.sourceKey can't be an email key" }, { status: 400 });
+  }
+  if (body.productHandle != null && !isProductHandle(body.productHandle)) {
+    return Response.json({ error: "productHandle must be a catalog product handle" }, { status: 400 });
   }
   if (body.simReturn && !/^#S\d+$/.test(body.orderName ?? "")) {
     return Response.json({ error: "simReturn needs a simulated orderName (#S…)" }, { status: 400 });

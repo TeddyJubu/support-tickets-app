@@ -65,6 +65,8 @@ export interface Ticket extends TicketSummary {
   automated: boolean;
   /** Simulated tickets: the store order the customer is writing about */
   orderName?: string | null;
+  /** Simulated tickets: the catalog product the customer writes about (Product.handle) */
+  productHandle?: string | null;
   /** Simulated tickets: the historical ticket this was replayed from */
   sourceTicketId?: string | null;
 }
