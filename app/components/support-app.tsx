@@ -12,7 +12,6 @@ import { TicketingTools } from "./ticketing-tools";
 import { cn } from "@/lib/utils";
 import {
   DemoSidebar,
-  TicketHeader,
   ConversationArea,
   CopilotPanel,
   Toaster,
@@ -49,8 +48,7 @@ function Workspace() {
         }} className="inline-flex items-center gap-2 border-b border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-accent md:hidden">
           <ArrowLeft className="size-4" /> Back to tickets
         </button>
-        <TicketHeader />
-        <div className="relative flex flex-1 overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
           <ConversationArea />
           <CopilotPanel />
         </div>

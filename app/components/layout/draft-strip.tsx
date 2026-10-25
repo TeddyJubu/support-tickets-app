@@ -13,7 +13,6 @@ import {
   Copy,
   Check,
   X,
-  ChevronDown,
   ShieldAlert,
   BookOpen,
   Wand2,
@@ -115,7 +114,6 @@ function RewriteBox({ draft, onDone }: { draft: DraftInfo; onDone: () => void })
 
 export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
   const { ticketDetail, refreshSelected, setComposeText, composeText, notify } = useDashboard();
-  const [expanded, setExpanded] = useState(false);
   const [rewriting, setRewriting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -282,11 +280,7 @@ export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
 
       {draft.body && (
         <div className="relative mt-2">
-          <p className={cn("whitespace-pre-wrap text-sm leading-relaxed text-foreground", !expanded && "line-clamp-4")}>{draft.body}</p>
-          <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-            <ChevronDown className={cn("size-3 transition-transform", expanded && "rotate-180")} />
-            {expanded ? "Less" : "Expand"}
-          </button>
+          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{draft.body}</p>
         </div>
       )}
       {!draft.body && needsStaff && <p className="mt-2 text-xs text-muted-foreground">No suggested text: write this reply yourself.</p>}

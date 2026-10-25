@@ -49,12 +49,23 @@ export function MessageComposer() {
     (!sendAccessUntil || !!ticketDetail?.pendingSend);
   const canSend = text.trim().length > 0 && !sending && !replyLocked;
 
-  // Grow with the text, up to a cap
+  // Grow within the conversation so long replies use its single scrollbar.
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`;
+    const grow = () => {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    grow();
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      grow();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [text]);
 
   // A drafted reply lands here from the copilot: bring it into focus
@@ -199,7 +210,7 @@ export function MessageComposer() {
             aria-label={mode === "note" ? "Internal note" : "Reply"}
             aria-describedby={mode === "reply" ? "sending-help" : undefined}
             rows={3}
-            className="block max-h-[40vh] min-h-[4.5rem] w-full resize-none bg-transparent px-4 pt-3 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+            className="block min-h-[4.5rem] w-full resize-none overflow-hidden bg-transparent px-4 pt-3 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-2 px-2 pb-2 pt-1">
             {text && !sending && (

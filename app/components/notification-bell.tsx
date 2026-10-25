@@ -52,10 +52,9 @@ export function NotificationBell({ onOpenTicket, align = "left" }: { onOpenTicke
           }}
           aria-label={`Notifications${data.unread ? ` (${data.unread} unread)` : ""}`}
           title="Notifications"
-          className="relative inline-flex min-h-9 items-center justify-center gap-2 rounded-lg px-2.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          className="relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground"
         >
           <Bell className="size-4" />
-          <span>Notifications</span>
           {data.unread > 0 && (
             <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-semibold leading-4 text-white">
               {data.unread > 99 ? "99+" : data.unread}

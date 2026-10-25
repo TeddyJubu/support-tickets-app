@@ -2,7 +2,7 @@
 
 import { CopilotChat, useCopilotChatContext } from "@yourgpt/copilot-sdk/ui";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Sparkles, UserRound, X, MapPin, Mail, Phone, Shield, Link2, Copy } from "lucide-react";
+import { Sparkles, ShoppingBag, X, MapPin, Mail, Phone, Shield, Link2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   customerLocation,
@@ -46,8 +46,12 @@ const TIER_TONE: Record<string, string> = {
 function CustomerDetails() {
   const { ticketDetail, customerRisk, sentiment, linkedTickets, selectTicket, selectedTicketId, notify } =
     useDashboard();
-  if (!ticketDetail) {
-    return <p className="p-5 text-sm text-muted-foreground">Open a ticket to see who you&apos;re talking to.</p>;
+  if (!ticketDetail || ticketDetail.ticket.id !== selectedTicketId) {
+    return (
+      <p className="p-5 text-sm text-muted-foreground">
+        {selectedTicketId ? "Loading ticket details…" : "Open a ticket to see who you&apos;re talking to."}
+      </p>
+    );
   }
   const { customer, ticket, stats, history } = ticketDetail;
   const name = customer?.name ?? ticket.customerName ?? ticket.customerEmail ?? "Unknown customer";
@@ -57,7 +61,7 @@ function CustomerDetails() {
   const others = history.filter((t) => t.id !== ticket.id);
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex items-start gap-3 border-b border-border px-5 py-5">
         <Avatar name={name} size="lg" />
         <div className="min-w-0 flex-1">
@@ -101,7 +105,10 @@ function CustomerDetails() {
         </div>
       </div>
 
-      <Section title="At a glance">
+      {ticket.simulated && <StoreRail key={ticket.id} ticketId={ticket.id} />}
+      {ticket.productHandle && <ProductRail key={`${ticket.id}:${ticket.productHandle}`} handle={ticket.productHandle} />}
+
+      <Section title="Support history">
         <div className="grid grid-cols-2 gap-2">
           {!ticket.simulated && <Stat label="Lifetime spend" value={customer ? formatMoney(customer.totalSpent) : "Unavailable"} />}
           {!ticket.simulated && <Stat label="Orders" value={customer?.totalOrders ?? "Unavailable"} />}
@@ -113,9 +120,6 @@ function CustomerDetails() {
         {ticket.simulated && <p className="mt-3 text-sm text-muted-foreground">{ticket.channel === "simulator" ? "Store orders and lifetime spend are unavailable for simulated customers." : "Store orders and lifetime spend appear in the verified store lookup below when available."}</p>}
         {customer?.note && <p className="mt-3 text-xs text-muted-foreground">{customer.note}</p>}
       </Section>
-
-      {ticket.simulated && <StoreRail key={ticket.id} ticketId={ticket.id} />}
-      {ticket.productHandle && <ProductRail key={`${ticket.id}:${ticket.productHandle}`} handle={ticket.productHandle} />}
 
       {(customerRisk || sentiment) && (
         <Section title="AI insights">
@@ -262,6 +266,7 @@ export function CopilotPanel() {
     {modal && <div aria-hidden="true" className="fixed inset-0 z-[70] bg-background/60 backdrop-blur-sm" onMouseDown={() => setSidePanel(null)} />}
     <aside
       ref={panelRef}
+      id="ticket-side-panel"
       role={modal ? "dialog" : undefined}
       aria-modal={modal || undefined}
       aria-label="Ticket side panel"
@@ -276,7 +281,7 @@ export function CopilotPanel() {
           {(
             [
               ["copilot", "AI copilot", Sparkles],
-              ["customer", "Customer", UserRound],
+              ["customer", "Details", ShoppingBag],
             ] as const
           ).map(([value, label, Icon]) => (
             <button

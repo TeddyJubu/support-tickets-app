@@ -20,16 +20,35 @@ export interface RailOrder {
   payment: string | null;
   fulfillment: string | null;
   cancelledAt: string | null;
-  items: Array<{ title: string; quantity: number; price: number | null; sku: string | null }>;
+  subtotal?: number | null;
+  shipping?: number | null;
+  tax?: number | null;
+  discounts?: number | null;
+  itemsTruncated?: boolean;
+  items: Array<{
+    title: string;
+    quantity: number;
+    /** Original unit price before discounts, in the order's shop currency. */
+    price: number | null;
+    sku: string | null;
+    variant?: string | null;
+    image?: { url: string; alt: string | null } | null;
+    /** Includes line discounts and code discounts; excludes order-level discounts. */
+    lineTotal?: number | null;
+  }>;
   shipments: Array<{ status: string | null; carrier: string | null; tracking: string | null; shipmentStatus: string | null }>;
   refunds: Array<{ amount: number | null; note: string | null; at: string | null }>;
   refunded: number | null;
 }
 
 export interface StoreSnapshot {
+  schemaVersion?: 2;
+  ordersTruncated?: boolean;
   customer: {
     name: string;
     email: string | null;
+    phone?: string | null;
+    currency?: string | null;
     location: string | null;
     ordersCount: number | null;
     totalSpent: number | null;
@@ -158,9 +177,13 @@ async function fetchSnapshot(ticketId: string, access: Extract<Access, { ok: tru
   // An older order the ticket is about is listed with the recent ones
   if (matchedOrder && !orders.some((o) => o.name === matchedOrder.name)) orders.push(matchedOrder);
   return {
+    schemaVersion: 2,
+    ordersTruncated: customer.ordersTruncated,
     customer: {
       name: customer.name,
       email: customer.email,
+      phone: customer.phone,
+      currency: customer.currency,
       location: customer.location,
       ordersCount: customer.ordersCount,
       totalSpent: customer.totalSpent,
@@ -186,7 +209,7 @@ export async function railForTicket(ticketId: string, opts: { refresh?: boolean 
 
   const cached = d.prepare(`SELECT * FROM store_snapshots WHERE ticket_id = ?`).get(ticketId) as Row | undefined;
   const age = cached ? (Date.now() - Date.parse(iso(cached.fetched_at)!)) / 1000 : Infinity;
-  if (cached && age < FRESH_SECONDS && !opts.refresh) {
+  if (cached && age < FRESH_SECONDS && !opts.refresh && JSON.parse(String(cached.data)).schemaVersion === 2) {
     return { available: true, reason: null, snapshot: JSON.parse(String(cached.data)), fetchedAt: iso(cached.fetched_at), stale: false, error: null, returns };
   }
   try {
@@ -233,7 +256,7 @@ export async function orderForTicket(ticketId: string, name?: string | null): Pr
     return { error: "The ticket doesn't name one of this customer's orders.", status: 404, recent };
   }
   const known = rail.snapshot.orders.find((o) => sameName(o.name, want));
-  if (known) return { order: known };
+  if (known && !known.itemsTruncated) return { order: known };
   try {
     const id = await findCustomerIdByEmail(access.config, access.email);
     const order = id ? await getOrderForCustomer(access.config, id, want) : null;
