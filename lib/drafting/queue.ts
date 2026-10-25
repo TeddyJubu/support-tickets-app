@@ -3,6 +3,7 @@
 //
 // Lifecycle: pending → processing → done | skipped | superseded | failed
 //            processing → retry_wait (transient AI error) → processing … (3 attempts max)
+//            after 3 transient failures: retry_wait again in 15 min with fresh attempts (2 more rounds)
 // A crashed worker's claim goes back to pending after 10 minutes (or to done if its draft
 // was already saved).
 
@@ -31,6 +32,9 @@ export const MAX_ATTEMPTS = 3;
 const STALE_MINUTES = 10;
 const PRIORITY_WINDOW = 25;
 const RETRY_DELAYS = [30, 120]; // seconds, after the 1st and 2nd failed attempt
+// An AI outage outlasts three quick tries: try again later on its own instead of waiting for staff
+export const AUTO_RETRY_ROUNDS = 2;
+export const AUTO_RETRY_MINUTES = 15;
 
 type Row = Record<string, unknown>;
 const toJob = (r: Row): Job => ({
@@ -123,6 +127,15 @@ export function failJob(d: DatabaseSync, id: number, kind: ErrorKind, message: s
   const job = getJob(d, id);
   if (!job) return null;
   const retry = kind === "transient" && job.attempts < MAX_ATTEMPTS;
+  const rounds = Number(job.detail?.autoRetries ?? 0);
+  if (kind === "transient" && !retry && rounds < AUTO_RETRY_ROUNDS) {
+    d.prepare(
+      `UPDATE jobs SET state = 'retry_wait', attempts = 0, run_after = datetime('now', ?), error = ?, error_kind = ?,
+         detail = json_patch(coalesce(detail, '{}'), json_object('autoRetries', ?)), updated_at = datetime('now')
+       WHERE id = ? AND state = 'processing'`,
+    ).run(`+${AUTO_RETRY_MINUTES} minutes`, message.slice(0, 500), kind, rounds + 1, id);
+    return "retry_wait";
+  }
   if (retry) {
     const delay = RETRY_DELAYS[Math.min(job.attempts - 1, RETRY_DELAYS.length - 1)];
     d.prepare(
@@ -182,7 +195,8 @@ export function retryDraft(d: DatabaseSync, ticketId: string) {
 export function queueStats(d: DatabaseSync) {
   const rows = d.prepare(`SELECT state, count(*) AS c FROM jobs GROUP BY state`).all() as Row[];
   const oldest = d
-    .prepare(`SELECT min(created_at) AS t FROM jobs WHERE state IN ('pending', 'retry_wait')`)
+    // Waiting since it became due: a job scheduled for later isn't a backlog yet
+    .prepare(`SELECT min(run_after) AS t FROM jobs WHERE state IN ('pending', 'retry_wait') AND run_after <= datetime('now')`)
     .get() as Row;
   return {
     ...Object.fromEntries(rows.map((r) => [String(r.state), Number(r.c)])),
