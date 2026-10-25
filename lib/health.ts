@@ -32,7 +32,8 @@ export function readiness() {
       if (!w.heartbeat) return { ok: false, detail: "never started" };
       if (!w.alive) return { ok: false, detail: `no heartbeat for ${w.ageSeconds} s` };
       const backlog = getDb()
-        .prepare(`SELECT min(created_at) AS t FROM jobs WHERE state IN ('pending', 'retry_wait')`)
+        // Jobs due now only: a draft retrying later (AI outage) isn't a stuck worker
+        .prepare(`SELECT min(run_after) AS t FROM jobs WHERE state IN ('pending', 'retry_wait') AND run_after <= datetime('now')`)
         .get() as { t: string | null };
       const waitMinutes = backlog.t ? (Date.now() - Date.parse(`${backlog.t.replace(" ", "T")}Z`)) / 60_000 : 0;
       return waitMinutes > 10 ? { ok: false, detail: `oldest draft job waiting ${Math.round(waitMinutes)} min` } : { ok: true };

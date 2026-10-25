@@ -174,7 +174,9 @@ export function DraftStrip({ ai }: { ai: AiDraftState | undefined }) {
         <span className="inline-flex items-center gap-2">
           <Loader2 className="size-4 animate-spin text-primary" />
           {job.state === "retry_wait"
-            ? `AI draft delayed (${job.error ?? "temporary error"}). Retrying at ${time(job.runAfter)}, attempt ${job.attempts + 1} of 3.`
+            ? job.attempts === 0
+              ? `AI draft delayed (${job.error ?? "temporary error"}). The AI service kept failing, so it will try again automatically at ${time(job.runAfter)}.`
+              : `AI draft delayed (${job.error ?? "temporary error"}). Retrying at ${time(job.runAfter)}, attempt ${job.attempts + 1} of 3.`
             : job.state === "pending" ? "AI reply queued; waiting for the drafting worker…" : "AI is drafting a reply…"}
         </span>
         <p className="mt-1 text-xs">

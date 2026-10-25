@@ -158,6 +158,21 @@ test("transient failures retry with backoff, then fail; auth errors fail at once
   raw.prepare(`UPDATE jobs SET run_after = datetime('now') WHERE id = ?`).run(job.id);
   job = queue.claimNextJob(db, "t");
   assert.equal(job.attempts, 3);
+  // After three quick tries, the same job comes back by itself later, twice, before it fails
+  for (let round = 1; round <= queue.AUTO_RETRY_ROUNDS; round++) {
+    assert.equal(queue.failJob(db, job.id, "transient", "500"), "retry_wait");
+    const later = raw.prepare(`SELECT run_after > datetime('now', '+14 minutes') AS later, attempts FROM jobs WHERE id = ?`).get(job.id);
+    assert.equal(later.later, 1);
+    assert.equal(later.attempts, 0);
+    assert.equal(queue.getJob(db, job.id).detail.autoRetries, round);
+    assert.equal(queue.claimNextJob(db, "t"), null, "not due yet");
+    assert.equal(queue.queueStats(db).oldestWaiting, null, "a job scheduled for later isn't a backlog");
+    for (let a = 1; a <= queue.MAX_ATTEMPTS; a++) {
+      raw.prepare(`UPDATE jobs SET run_after = datetime('now') WHERE id = ?`).run(job.id);
+      job = queue.claimNextJob(db, "t");
+      if (a < queue.MAX_ATTEMPTS) assert.equal(queue.failJob(db, job.id, "transient", "500"), "retry_wait");
+    }
+  }
   assert.equal(queue.failJob(db, job.id, "transient", "500"), "failed");
 
   ticket("Another one about my order");
