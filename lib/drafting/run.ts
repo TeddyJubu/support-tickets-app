@@ -15,6 +15,7 @@ import { onDraftSaved } from "./hooks";
 import { storeIntro, storeSettings } from "../settings";
 import { normalizeLegacyStoreBrand } from "../kb/branding";
 import { storeAccess } from "../store";
+import { getProduct } from "../helpdesk-db";
 
 const MAX_TOOL_ROUNDS = 6;
 // The default model reasons before it answers; reasoning counts against this budget, and a
@@ -84,11 +85,24 @@ function ticketPrompt(detail: NonNullable<ReturnType<typeof getSimTicketDetail>>
     `Ticket ${t.id}: "${neutralize(t.subject ?? "(no subject)")}"`,
     `Customer: ${neutralize(c?.firstName ?? t.customerName ?? "")} (${c?.totalOrders ?? 0} orders, ${c ? `$${c.totalSpent.toFixed(2)}` : "unknown"} lifetime)`,
     storePrompt(t.id, t.orderName ?? null),
+    productPrompt(t.productHandle ?? null),
     notices.length
       ? `Live owner notices (override the KB):\n${notices.map((n) => `- ${neutralize(n.title)}: ${neutralize(n.body)}`).join("\n")}`
       : "No live owner notices.",
     `Conversation (oldest first):\n\n${convo}`,
   ].join("\n\n");
+}
+
+// The catalog product a simulated ticket is about: facts to ground sizing, price and stock answers
+export function productPrompt(handle: string | null) {
+  const p = handle ? getProduct(handle) : null;
+  if (!p) return "No catalog product is linked to this ticket.";
+  const price = p.priceMin == null ? "unavailable" : p.priceMax && p.priceMax !== p.priceMin ? `$${p.priceMin}–$${p.priceMax}` : `$${p.priceMin}`;
+  return [
+    `Catalog product this ticket is about: ${neutralize(p.title ?? p.handle)}${p.vendor ? ` by ${neutralize(p.vendor)}` : ""}`,
+    `Price: ${price}. ${p.options ? `Options: ${neutralize(p.options)}. ` : ""}${p.inventory > 0 ? "In stock" : "Out of stock"}${p.finalSale ? ". Final sale" : ""}.`,
+    "Catalog facts can change: don't promise stock or price beyond these.",
+  ].join("\n");
 }
 
 export interface DraftOutcome {

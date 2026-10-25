@@ -295,6 +295,18 @@ export function findSimilarTickets(id: string, limit = 5): SimilarTicket[] {
     .slice(0, limit);
 }
 
+export const isProductHandle = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9][a-z0-9-]{0,199}$/.test(v);
+
+/** One catalog product by handle; null when it's unknown or the catalog isn't seeded */
+export function getProduct(handle: string): Product | null {
+  try {
+    const r = getDb().prepare(`SELECT * FROM products WHERE handle = ?`).get(handle) as Row | undefined;
+    return r ? toProduct(r) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function searchProducts(q: string, limit = 8): Product[] {
   const match = ftsQuery(q);
   if (!match) return [];

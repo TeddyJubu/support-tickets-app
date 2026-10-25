@@ -16,6 +16,7 @@ import { useDashboard } from "../context/dashboard-context";
 import { Avatar, IconButton, StatusBadge, copyText } from "../ui";
 import { ticketStatusOf } from "./demo-sidebar";
 import { StoreRail } from "./store-rail";
+import { ProductRail } from "./product-rail";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -105,6 +106,7 @@ function CustomerDetails() {
       </div>
 
       {ticket.simulated && <StoreRail key={ticket.id} ticketId={ticket.id} />}
+      {ticket.productHandle && <ProductRail key={`${ticket.id}:${ticket.productHandle}`} handle={ticket.productHandle} />}
 
       <Section title="Support history">
         <div className="grid grid-cols-2 gap-2">
