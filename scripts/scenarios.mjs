@@ -87,6 +87,7 @@ for (const s of batch) {
     tags: "scenario",
     aiIntent: s.intent || null,
     sourceTicketId: s.seed_ref || null,
+    productHandle: s.product_handle || null,
     runId,
   };
   if (args["dry-run"]) {

@@ -415,4 +415,13 @@ export const SIM_MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    version: 12,
+    name: "catalog product on simulated tickets",
+    up: (db) =>
+      db.exec(`
+        -- Simulated tickets: the catalog product (helpdesk.db products.handle) the customer writes about
+        ALTER TABLE sim_tickets ADD COLUMN product_handle TEXT;
+      `),
+  },
 ];
