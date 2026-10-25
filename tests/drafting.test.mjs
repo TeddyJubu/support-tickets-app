@@ -423,12 +423,16 @@ test("cleaner blocks promised results and claims about the ticket", () => {
     "You'll receive a replacement dress next week.",
     "Thank you for the photos; they've been added to the ticket for review.",
     "Your note was saved to your account.",
+    "A zipper pull that pops off is a defect, so a free replacement is exactly what you can expect.",
+    "We'll pull up your order, confirm the size, and send either a new zipper pull or a replacement hoodie.",
   ]) {
     assert.equal(cleanDraft(`Hi,\n\n${claim}`, false).suppressed, true, claim);
   }
   for (const fine of [
     "You'll receive a new tracking number once the order ships.",
     "Photos help our team review damaged items.",
+    "If the item is faulty, we'll send a new one once the photos are reviewed.",
+    "Store credit is what you get for returns after the 7-day window.",
   ]) {
     assert.equal(cleanDraft(`Hi,\n\n${fine}`, false).suppressed, false, fine);
   }
@@ -520,6 +524,8 @@ test("cleaner holds back talk about the ticket or the AI's own access", () => {
     "Your note about the 8th is right here in the ticket, so whoever picks it up will see it.",
     "I don't have access to the exchange records from my side.",
     "I'm not able to see live order details.",
+    "I'm not able to confirm the refund details or redirect the money from here.",
+    "I can't change the ship date myself.",
     "Your order number is already in this ticket.",
   ]) {
     const r = cleanDraft(`Hi,\n\n${talk}`, false);
@@ -530,6 +536,8 @@ test("cleaner holds back talk about the ticket or the AI's own access", () => {
     "We handle everything by email in this thread so nothing gets lost.",
     "You can see the tracking in your shipping email.",
     "On our end, orders ship within two days.",
+    "We can't confirm a delivery date, since that's up to the carrier.",
+    "I can't confirm a restock date yet, but we'll follow up.",
   ]) {
     assert.equal(cleanDraft(`Hi,\n\n${fine}`, false).suppressed, false, fine);
   }

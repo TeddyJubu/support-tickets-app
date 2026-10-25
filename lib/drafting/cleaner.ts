@@ -62,6 +62,10 @@ const ACTION_CLAIM = new RegExp(
     `\\b(?:this|it|that|your\\s+(?:request|order|ticket|case|message|issue))\\s+(?:has\\s+been|is\\s+being|was)\\s+(?:escalated|forwarded|flagged|marked|passed)\\b`,
     // Promised results: "you can expect a corrected invoice", "you'll receive a replacement"
     `\\byou\\s*(?:['’]ll|\\s+will|\\s+can|\\s+should)\\s+(?:expect|receive|get|be\\s+getting)\\s+(?:a|an|your)\\s+(?:corrected|revised|updated|new|replacement|reissued)\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,
+    // Reversed or roundabout promises: "a free replacement is exactly what you can expect",
+    // "we'll pull up your order ... and send a new zipper pull"
+    `\\b(?:free\\s+)?(?:replacement|refund|exchange|store\\s+credit|new\\s+\\w+)\\s+is\\s+(?:exactly\\s+)?what\\s+you\\s+(?:can|will|should)\\s+(?:expect|get|receive)\\b`,
+    `\\b(?:we|i)\\s*['’]ll\\b[^.!?\\n]{0,120}?\\bsend\\s+(?:you\\s+)?(?:either\\s+)?(?:a|an)\\s+(?:new|replacement|free)\\b(?![^.!?\\n]{0,80}\\b(?:once|after|when|if)\\b)`,
     // Claims about the ticket the AI can't see or change: "the photos have been added to the ticket"
     `\\b(?:been|were|was)\\s+(?:added|attached|saved|logged|uploaded)\\s+to\\s+(?:the|your)\\s+(?:ticket|case|file|order|account|notes?|records?)\\b`,
   ].join("|"),
@@ -77,6 +81,8 @@ const INTERNAL_TALK = new RegExp(
     `\\bfrom\\s+my\\s+(?:side|end)\\b`,
     `\\bi\\s+(?:don['’]t|do\\s+not)\\s+have\\s+access\\b`,
     `\\bi\\s*(?:can['’]t|cannot|am\\s+not\\s+able\\s+to|['’]m\\s+not\\s+able\\s+to|am\\s+unable\\s+to)\\s+(?:see|access|view|look\\s+up|pull\\s+up)\\b`,
+    // "I can't confirm ... from here", "I can't change it myself": its own limits, not the team's
+    `\\bi\\s*(?:can['’]t|cannot|am\\s+not\\s+able\\s+to|['’]m\\s+not\\s+able\\s+to|am\\s+unable\\s+to)\\s+(?:confirm|verify|check|redirect|change|find)\\b[^.!?\\n]{0,80}\\b(?:from\\s+here|myself|on\\s+my\\s+own)\\b`,
   ].join("|"),
   "i",
 );
