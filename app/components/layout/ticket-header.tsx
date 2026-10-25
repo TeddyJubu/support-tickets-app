@@ -14,7 +14,7 @@ import {
   ExternalLink,
   Lock,
   Sparkles,
-  UserRound,
+  ShoppingBag,
   Check,
   Clock,
   CircleDot,
@@ -302,7 +302,7 @@ export function TicketHeader() {
                 sidePanel === "customer" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <UserRound className="size-4" />
+              <ShoppingBag className="size-4" />
               Details
             </button>
             <IconButton

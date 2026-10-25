@@ -2,7 +2,7 @@
 
 import { CopilotChat, useCopilotChatContext } from "@yourgpt/copilot-sdk/ui";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Sparkles, UserRound, X, MapPin, Mail, Phone, Shield, Link2, Copy } from "lucide-react";
+import { Sparkles, ShoppingBag, X, MapPin, Mail, Phone, Shield, Link2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   customerLocation,
@@ -279,7 +279,7 @@ export function CopilotPanel() {
           {(
             [
               ["copilot", "AI copilot", Sparkles],
-              ["customer", "Details", UserRound],
+              ["customer", "Details", ShoppingBag],
             ] as const
           ).map(([value, label, Icon]) => (
             <button
