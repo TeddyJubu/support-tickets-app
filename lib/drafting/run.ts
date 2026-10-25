@@ -100,7 +100,10 @@ export function productPrompt(handle: string | null) {
   const price = p.priceMin == null ? "unavailable" : p.priceMax && p.priceMax !== p.priceMin ? `$${p.priceMin}–$${p.priceMax}` : `$${p.priceMin}`;
   return [
     `Catalog product this ticket is about: ${neutralize(p.title ?? p.handle)}${p.vendor ? ` by ${neutralize(p.vendor)}` : ""}`,
-    `Price: ${price}. ${p.options ? `Options: ${neutralize(p.options)}. ` : ""}${p.inventory > 0 ? "In stock" : "Out of stock"}${p.finalSale ? ". Final sale" : ""}.`,
+    `Price: ${price}. ${p.options ? `Sizes/options listed: ${neutralize(p.options)}. ` : ""}${p.finalSale ? "Final sale. " : ""}`,
+    p.inventory > 0
+      ? `Stock: ${p.inventory} units in total across all sizes. Which sizes are in stock is unknown, so never say a specific size is in stock or available; say the team will check that size.`
+      : "Stock: none in any size right now.",
     "Catalog facts can change: don't promise stock or price beyond these.",
   ].join("\n");
 }

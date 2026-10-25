@@ -537,5 +537,7 @@ test("a simulated ticket can link a catalog product; staff see its catalog facts
 
   const { productPrompt } = await importApp("lib/drafting/run.ts");
   assert.match(productPrompt("rompp-cable-knit-green"), /Rompp Cable Knit 2 Piece-Green by Rompp[\s\S]*\$38\.99[\s\S]*Size: 12M/);
+  assert.match(productPrompt("rompp-cable-knit-green"), /5 units in total across all sizes\. Which sizes are in stock is unknown/);
+  assert.doesNotMatch(productPrompt("rompp-cable-knit-green"), /In stock/);
   assert.match(productPrompt(null), /No catalog product/);
 });

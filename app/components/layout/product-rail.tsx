@@ -59,7 +59,7 @@ export function ProductRail({ handle }: { handle: string }) {
             <p className="font-medium tabular-nums">{price(product)}</p>
             {product.options && <p className="text-muted-foreground">{product.options}</p>}
             <div className="flex flex-wrap gap-1.5 pt-0.5">
-              <span className="rounded bg-background px-1.5 py-0.5">{product.inventory > 0 ? `In stock (${product.inventory})` : "Out of stock"}</span>
+              <span className="rounded bg-background px-1.5 py-0.5">{product.inventory > 0 ? `${product.inventory} in stock across all sizes` : "Out of stock in all sizes"}</span>
               {product.finalSale && (
                 <span className="inline-flex items-center gap-1 rounded bg-background px-1.5 py-0.5 text-warning">
                   <Tag className="size-3" /> Final sale
