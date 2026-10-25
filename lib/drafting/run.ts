@@ -118,11 +118,8 @@ const latestCustomerMessageId = (ticketId: string) =>
   Number((getDb().prepare(`SELECT max(id) AS id FROM sim_messages WHERE ticket_id = ? AND author = 'customer'`).get(ticketId) as { id: number | null }).id ?? 0);
 
 /** The model conversation; resolves with its final answer text */
-async function converse(system: string, user: string, ctx: ToolContext, deadline: number) {
-  const messages: ChatMessage[] = [
-    { role: "system", content: system },
-    { role: "user", content: user },
-  ];
+async function converse(start: ChatMessage[], ctx: ToolContext, deadline: number) {
+  const messages: ChatMessage[] = [...start];
   let nudged = false;
   for (let round = 0; round <= MAX_TOOL_ROUNDS + 1; round++) {
     const remaining = deadline - Date.now();
@@ -157,6 +154,12 @@ async function converse(system: string, user: string, ctx: ToolContext, deadline
   throw new DraftError("The AI kept calling tools without answering", "invalid");
 }
 
+// Questions whose answers come from store policy: the drafter must search the KB for these
+const POLICY_TOPIC =
+  /\b(?:return|refund|exchang|final[- ]sale|store credit|gift (?:card|wrap|note|return)|ship|deliver|pick[- ]?up|package protection|cancel|restock|discount|promo|code|siz(?:e|ing)|fit|wash|care label|hours|open|customs|dut(?:y|ies)|international|window|label|fee|warehouse)/i;
+const SEARCH_FIRST =
+  "You answered without calling search_kb, but this reply depends on store policy. Call search_kb now for the policy it relies on, then answer again in the required format, basing every policy fact only on what the search returns.";
+
 export async function draftForJob(job: Job): Promise<DraftOutcome> {
   if (!aiConfig()) throw new DraftError("Workers AI is not configured", "auth");
   const deadline = Date.now() + JOB_TIMEOUT_MS;
@@ -179,7 +182,15 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
     kbSensitiveTitles: new Set(),
     calls: [],
   };
-  const { answer, messages } = await converse(systemPrompt(token), ticketPrompt(detail, latestId), ctx, deadline);
+  const first = await converse(
+    [
+      { role: "system", content: systemPrompt(token) },
+      { role: "user", content: ticketPrompt(detail, latestId) },
+    ],
+    ctx,
+    deadline,
+  );
+  let { answer, messages } = first;
   let raw = answer;
   let parsed = extract(answer, token);
   if (!parsed.ok && deadline - Date.now() > 20_000) {
@@ -193,6 +204,26 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
   }
   // Model flakiness, not a bad ticket: retry the job later (30 s, then 120 s)
   if (!parsed.ok) throw new DraftError(parsed.error, "transient");
+
+  // A reply that touches policy but never searched the KB gets one turn to search first; its
+  // answer replaces the first only when it parses. Policy facts from memory were the main source
+  // of wrong drafts (pickup locations, windows, fees).
+  const searched = () => ctx.calls.some((c) => c.name === "search_kb" && c.ok);
+  let searchedOnRetry = false;
+  if (parsed.draft && !searched() && POLICY_TOPIC.test(`${latest.body}\n${parsed.draft}`) && deadline - Date.now() > 30_000) {
+    const retry = await converse(
+      [...messages, { role: "assistant", content: raw }, { role: "user", content: SEARCH_FIRST }],
+      ctx,
+      deadline,
+    ).catch(() => null);
+    const next = retry ? extract(retry.answer, token) : null;
+    if (retry && next?.ok) {
+      ({ answer, messages } = retry);
+      raw = answer;
+      parsed = next;
+      searchedOnRetry = searched();
+    }
+  }
 
   // Severity comes from the customer's words and the model's verdict, never lower than either.
   // The KB doesn't raise priority: a sensitive article only marks the draft sensitive when the
@@ -244,6 +275,7 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
       ...cleaned.notes,
       ...(brandChanged ? ["replaced historical store branding with the current store name"] : []),
       ...(signed?.changed ? ["set the sign-off to the store's sender name"] : []),
+      ...(searchedOnRetry ? ["searched the knowledge base on a second try"] : []),
       ...(ctx.calls.some((c) => !c.ok) ? ["a lookup failed while drafting"] : []),
       // The prompt requires a KB search for policy answers; tell staff when none happened
       ...(!ctx.calls.some((c) => c.name === "search_kb" && c.ok) && !cleaned.suppressed ? ["written without a knowledge-base lookup: check any policy facts"] : []),

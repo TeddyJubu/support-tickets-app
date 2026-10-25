@@ -595,3 +595,48 @@ test("drafts that narrate the AI's steps or have no greeting and real content ar
     assert.equal(markersMod.extract(wrap(t, draft), t).ok, true, draft);
   }
 });
+
+// An AI that skips search_kb on its first answer; `searchOnNudge` decides whether it searches when told to
+function noSearchAi(searchOnNudge) {
+  process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+  process.env.CLOUDFLARE_API_TOKEN = "token";
+  ai.setAiFetch(async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).includes("/run/")) {
+      return Response.json({ success: true, result: { data: body.text.map(() => new Array(1024).fill(0.01)) } });
+    }
+    calls.push(body);
+    const t = /<<<DRAFT (\w+)>>>/.exec(body.messages[0].content)[1];
+    const nudged = body.messages.some((m) => m.role === "user" && /You answered without calling search_kb/.test(m.content ?? ""));
+    const searched = body.messages.some((m) => m.role === "tool");
+    if (nudged && searchOnNudge && !searched && body.tools) {
+      return Response.json({
+        choices: [{ message: { role: "assistant", content: "", tool_calls: [{ id: "s1", type: "function", function: { name: "search_kb", arguments: '{"query":"pickup location"}' } }] } }],
+      });
+    }
+    const draft = nudged && searched ? "Hi,\n\nPickup is from our Toms River warehouse." : "Hi,\n\nYou can pick up in Monsey on Thursday.";
+    return Response.json({ choices: [{ message: { role: "assistant", content: wrap(t, draft) } }] });
+  });
+}
+
+test("a policy answer written without a KB search gets one turn to search first", async () => {
+  clearQueue();
+  noSearchAi(true);
+  const id = ticket("Search-first test: can I switch to pickup in Monsey?");
+  const outcome = await run.processJob(queue.claimNextJob(db, "t"));
+  assert.equal(outcome.state, "done");
+  const d = simDb.getSimTicketDetail(id).ai.draft;
+  assert.match(d.body, /Toms River/);
+  assert.ok(d.flags.includes("searched the knowledge base on a second try"));
+  assert.ok(!d.flags.some((f) => f.startsWith("written without a knowledge-base lookup")));
+});
+
+test("if it still won't search, the first draft stays and staff are warned", async () => {
+  clearQueue();
+  noSearchAi(false);
+  const id = ticket("Search-first test 2: can I switch to pickup in Monsey?");
+  await run.processJob(queue.claimNextJob(db, "t"));
+  const d = simDb.getSimTicketDetail(id).ai.draft;
+  assert.match(d.body, /Monsey/);
+  assert.ok(d.flags.some((f) => f.startsWith("written without a knowledge-base lookup")));
+});
