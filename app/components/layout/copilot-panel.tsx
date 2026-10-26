@@ -308,14 +308,14 @@ export function CopilotPanel() {
       </div>
 
       {/* Kept mounted so a running copilot answer isn't interrupted */}
-      <div className={cn("min-h-0 flex-1 flex-col", sidePanel === "copilot" ? "flex" : "hidden")}>
+      <div className={cn("min-h-0 flex-1 flex-col overflow-hidden", sidePanel === "copilot" ? "flex" : "hidden")}>
         <p className="border-b border-border px-4 py-2 text-xs text-muted-foreground" role="status">
           {activeTicket ? `Current ticket: ${activeTicket.id} · ${activeTicket.subject ?? "No subject"}` : "Open a ticket to ask about its conversation."}
           {activeTicket?.simulated && " Use the AI draft below the conversation for suggested replies. Copilot helps investigate questions."}
         </p>
         <CopilotChat
           placeholder="Ask about this ticket, customer, products…"
-          className="h-full"
+          className="min-h-0 flex-1"
           persistence={true}
           showThreadPicker={false}
           renderInput={() => <CopilotInput key={activeTicket?.id ?? "none"} disabled={!activeTicket} />}
