@@ -2,10 +2,10 @@
 //
 //   1. "Read & write": a 30-minute send grant bound to the browser session (stored as a hash).
 //   2. Review: the server records exactly what will be sent, to whom, answering which message.
-//   3. Confirm: the send must still match the review (no newer customer message, same text,
-//      same recipient), carries an idempotency key, and is logged as a send intent before
-//      anything goes out. A retry never sends twice; an outcome nobody can confirm blocks new
-//      replies until a person checks and settles it.
+//   3. Confirm: the send must still match the review (no newer customer message, no reply sent
+//      since, same text, recipient and subject), carries an idempotency key, and is logged as a
+//      send intent before anything goes out. A retry never sends twice; an outcome nobody can
+//      confirm blocks new replies until a person checks and settles it.
 
 import { createHash, randomBytes } from "node:crypto";
 import { transaction, isoFromSql, toSqlTime } from "./db";
@@ -22,6 +22,7 @@ import {
   getSimTicketDetail,
   nowSql,
   pendingSend,
+  recordEmailId,
 } from "./sim-db";
 
 export { pendingSend };
@@ -68,13 +69,16 @@ function target(ticketId: string) {
   const detail = getSimTicketDetail(ticketId);
   if (!detail) return null;
   const latest = [...(detail.messages ?? [])].reverse().find((m) => m.author === "customer") ?? null;
+  // The newest reply anyone sent: a reply after the review means the customer was answered
+  const lastReply = [...(detail.messages ?? [])].reverse().find((m) => m.author === "agent")?.id ?? null;
   const email = detail.ticket.channel === "email";
   const thread = email ? emailThread(ticketId) : null;
   if (email && !thread) return { error: "This email ticket has no valid customer address" } as const;
   const recipient = email
     ? thread!.to
     : `${detail.customer?.email ?? detail.ticket.customerEmail ?? "simulated customer"} (simulated)`;
-  return { detail, latest, channel: email ? ("email" as const) : ("simulator" as const), recipient, thread } as const;
+  const subject = thread ? (/^re:/i.test(thread.subject) ? thread.subject : `Re: ${thread.subject}`) : (detail.ticket.subject ?? null);
+  return { detail, latest, lastReply, channel: email ? ("email" as const) : ("simulator" as const), recipient, subject, thread } as const;
 }
 
 export type SendFailure = { status: number; code: string; error: string };
@@ -102,16 +106,16 @@ export function createReview(ticketId: string, user: StaffUser, body: string): S
   const expires = sqlIn(REVIEW_MINUTES);
   getDb()
     .prepare(
-      `INSERT INTO send_reviews (token_hash, ticket_id, user_id, content_hash, recipient, source_message_id, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO send_reviews (token_hash, ticket_id, user_id, content_hash, recipient, subject, source_message_id, last_reply_id, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(sha(token), ticketId, user.id, contentHash(text), t.recipient, t.latest?.id ?? null, expires);
+    .run(sha(token), ticketId, user.id, contentHash(text), t.recipient, t.subject, t.latest?.id ?? null, t.lastReply, expires);
   getDb().prepare(`DELETE FROM send_reviews WHERE expires_at < datetime('now', '-1 day')`).run();
   return {
     reviewToken: token,
     channel: t.channel,
     recipient: t.recipient,
-    subject: t.thread ? (/^re:/i.test(t.thread.subject) ? t.thread.subject : `Re: ${t.thread.subject}`) : (t.detail.ticket.subject ?? null),
+    subject: t.subject,
     answering: t.latest ? { id: t.latest.id, excerpt: t.latest.body.slice(0, 600), at: t.latest.createdAt } : null,
     expiresAt: iso(expires)!,
   };
@@ -157,6 +161,13 @@ export async function confirmSend(input: {
   if ((t.latest?.id ?? null) !== (review.source_message_id == null ? null : Number(review.source_message_id))) {
     return { status: 409, code: "newer_message", error: "The customer wrote again after you reviewed this. Read their new message first." };
   }
+  // Someone else (or another tab) answered since this review: sending too would email the customer twice
+  if (t.lastReply !== (review.last_reply_id == null ? null : Number(review.last_reply_id))) {
+    return { status: 409, code: "already_answered", error: "Someone replied on this ticket after you reviewed this. Read their reply first." };
+  }
+  if (t.subject !== (review.subject == null ? null : String(review.subject))) {
+    return { status: 409, code: "changed_subject", error: "The subject changed after you reviewed it. Review it again." };
+  }
   const pending = pendingSend(input.ticketId);
   if (pending && pending.key !== key) {
     return { status: 409, code: "pending_send", error: "An earlier reply on this ticket hasn't been confirmed yet. Check its status first." };
@@ -200,7 +211,7 @@ export async function confirmSend(input: {
     try {
       messageId = await sendEmail({
         to: t.thread!.to,
-        subject: /^re:/i.test(t.thread!.subject) ? t.thread!.subject : `Re: ${t.thread!.subject}`,
+        subject: t.subject!,
         text,
         inReplyTo: t.thread!.messageIds.at(-1),
         references: t.thread!.messageIds,
@@ -228,14 +239,23 @@ export async function confirmSend(input: {
 
 // ---------- uncertain sends ----------
 
-/** A person settles a send whose outcome is unknown: "sent" records it, "not_sent" allows a resend */
+/**
+ * A person settles a send whose outcome is unknown: "sent" records it, "not_sent" allows a
+ * resend (refused once SES has accepted it)
+ */
 export function resolvePendingSend(ticketId: string, key: string, outcome: "sent" | "not_sent", user: StaffUser) {
   const d = getDb();
   return transaction(d, () => {
     const r = d.prepare(`SELECT * FROM sim_email_outbox WHERE idem_key = ? AND ticket_id = ? AND status = 'sending'`).get(key, ticketId) as Row | undefined;
     if (!r) return { error: "Nothing to settle: the send is already resolved" };
+    // A Message-ID means the email service accepted it: it went out, so it can't be sent again
+    if (outcome === "not_sent" && r.message_id != null) {
+      return { error: "The email service accepted this reply, so it went out. Record it as sent." };
+    }
     if (outcome === "sent") {
       d.prepare(`UPDATE sim_email_outbox SET status = 'sent', resolved_by = ?, updated_at = datetime('now') WHERE idem_key = ?`).run(user.username, key);
+      // The customer's answer to it then threads into this ticket by its headers
+      if (r.message_id != null) recordEmailId(String(r.message_id), ticketId);
       // Record it in the thread so the conversation matches what the customer got
       addSimMessage(ticketId, "agent", String(r.body), String(r.actor ?? user.displayName));
       captureLesson({ ticketId, sendKey: key, finalText: String(r.body), actor: user.username });

@@ -286,3 +286,61 @@ test("a simulated send that fails to save frees the send for a retry", async () 
   assert.equal((await send(id, "Saved on retry.", r.reviewToken, k)).status, 201);
   assert.equal(agentMessages(id), 1);
 });
+
+test("two people answering the same message: only the first confirm emails the customer", async () => {
+  reset();
+  await enable();
+  await enable(other);
+  const id = emailTicket();
+  const mine = (await reviewFor(id, "It ships Monday.")).json;
+  const theirs = (await reviewFor(id, "It ships Monday!", other)).json;
+  assert.equal((await send(id, "It ships Monday.", mine.reviewToken, key("first"))).status, 201);
+  const late = await send(id, "It ships Monday!", theirs.reviewToken, key("second"), other);
+  assert.equal(late.status, 409);
+  assert.equal(late.json.code, "already_answered");
+  assert.equal(ses.calls.length, 1, "the customer got one email");
+  assert.equal(agentMessages(id), 1);
+  // A follow-up reviewed after that reply still goes out
+  const { res } = await reviewAndSend(id, "One more thing: tracking is attached.", key("follow-up"));
+  assert.equal(res.status, 201, res.text);
+  assert.equal(ses.calls.length, 2);
+});
+
+test("a subject renamed after the review cancels it", async () => {
+  reset();
+  await enable();
+  const id = emailTicket();
+  const r = (await reviewFor(id, "Here's your tracking link.")).json;
+  assert.equal(r.subject, "Re: Where is my order?");
+  raw.prepare(`UPDATE sim_tickets SET subject = 'Internal: VIP' WHERE id = ?`).run(id);
+  const res = await send(id, "Here's your tracking link.", r.reviewToken, key("renamed"));
+  assert.equal(res.status, 409);
+  assert.equal(res.json.code, "changed_subject");
+  assert.equal(ses.calls.length, 0);
+});
+
+test("a reply the email service accepted can't be marked 'didn't go out'", async () => {
+  reset();
+  await enable();
+  const id = emailTicket();
+  const k = key("accepted");
+  const r = (await reviewFor(id, "Your refund is approved.")).json;
+  raw.exec(`CREATE TRIGGER fail_agent_insert2 BEFORE INSERT ON sim_messages WHEN NEW.author = 'agent' BEGIN SELECT RAISE(ABORT, 'disk on fire'); END`);
+  assert.equal((await send(id, "Your refund is approved.", r.reviewToken, k)).json.code, "sent_not_saved");
+  raw.exec(`DROP TRIGGER fail_agent_insert2`);
+  const pending = simDb.getSimTicketDetail(id).pendingSend;
+  assert.equal(pending.hasMessageId, true);
+
+  const notSent = await call(resolveRoute.POST, { method: "POST", params: { id }, headers: as(staff), body: { key: k, outcome: "not_sent" } });
+  assert.equal(notSent.status, 409);
+  assert.equal(outbox(k).status, "sending", "still blocks new replies");
+  assert.equal((await reviewFor(id, "Your refund is approved.")).json.code, "pending_send");
+
+  const sent = await call(resolveRoute.POST, { method: "POST", params: { id }, headers: as(staff), body: { key: k, outcome: "sent" } });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.json.messages.at(-1).body, "Your refund is approved.");
+  // The customer's answer to that email threads back into this ticket
+  const emailed = outbox(k).message_id;
+  assert.equal(raw.prepare(`SELECT ticket_id FROM sim_email_ids WHERE message_id = ?`).get(emailed)?.ticket_id, id);
+  assert.equal(ses.calls.length, 1);
+});

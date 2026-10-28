@@ -117,6 +117,14 @@ export interface DraftOutcome {
 const latestCustomerMessageId = (ticketId: string) =>
   Number((getDb().prepare(`SELECT max(id) AS id FROM sim_messages WHERE ticket_id = ? AND author = 'customer'`).get(ticketId) as { id: number | null }).id ?? 0);
 
+// Staff already answered the message this job drafts for (or replied after asking for the draft):
+// a late draft would only invite a second reply
+const ANSWERED = "a reply was already sent";
+const repliedSince = (job: Job) =>
+  !!getDb()
+    .prepare(`SELECT 1 FROM sim_messages WHERE ticket_id = ? AND author = 'agent' AND id > ?`)
+    .get(job.ticketId, Math.max(job.messageId ?? 0, Number(job.detail?.afterReply ?? 0)));
+
 /** The model conversation; resolves with its final answer text */
 async function converse(start: ChatMessage[], ctx: ToolContext, deadline: number) {
   const messages: ChatMessage[] = [...start];
@@ -168,6 +176,7 @@ export async function draftForJob(job: Job): Promise<DraftOutcome> {
   if (detail.ticket.trashed || detail.ticket.spam) return { state: "skipped", reason: "Ticket is in trash or spam" };
   const latestId = latestCustomerMessageId(job.ticketId);
   if (!job.messageId || job.messageId !== latestId) return { state: "superseded", reason: "A newer customer message arrived" };
+  if (repliedSince(job)) return { state: "skipped", reason: ANSWERED };
   const latest = detail.messages!.find((m) => m.id === latestId)!;
 
   const pre = classify({ subject: detail.ticket.subject ?? "", message: latest.body, intents: [detail.ticket.aiIntent ?? ""].filter(Boolean) });
@@ -298,11 +307,12 @@ function saveDraft(
 ): DraftOutcome {
   const db = getDb();
   const saved = transaction(db, () => {
-    // Re-checked under the write lock: a newer customer message makes this draft stale, and a
-    // job that already timed out (and may be retried) must not save a late draft
-    if (latestCustomerMessageId(job.ticketId) !== job.messageId) return null;
+    // Re-checked under the write lock: a newer customer message or a staff reply makes this
+    // draft stale, and a job that already timed out (and may be retried) must not save a late draft
+    if (latestCustomerMessageId(job.ticketId) !== job.messageId) return "superseded" as const;
+    if (repliedSince(job)) return "answered" as const;
     const state = (db.prepare(`SELECT state FROM jobs WHERE id = ?`).get(job.id) as { state?: string } | undefined)?.state;
-    if (state !== "processing") return null;
+    if (state !== "processing") return "superseded" as const;
     const res = db
       .prepare(
         `INSERT INTO drafts (ticket_id, job_id, message_id, body, action, severity, sensitive, missing_facts, staff_next_step,
@@ -325,7 +335,8 @@ function saveDraft(
     finishJob(db, job.id, "done", { draftId: Number(res.lastInsertRowid) });
     return Number(res.lastInsertRowid);
   });
-  if (saved == null) return { state: "superseded", reason: "A newer customer message arrived while drafting" };
+  if (saved === "answered") return { state: "skipped", reason: ANSWERED };
+  if (saved === "superseded") return { state: "superseded", reason: "A newer customer message arrived while drafting" };
   onDraftSaved({ ticketId: job.ticketId, draftId: saved, severity: d.severity, sensitive: d.sensitive, classification: d.classification });
   return { state: "done", draftId: saved };
 }

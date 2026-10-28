@@ -74,12 +74,6 @@ export interface DashboardState {
   // Actions taken
   linkedTickets: LinkedTicket[];
   appliedResolution: string | null;
-  sentOffer: { type: string; value: string } | null;
-  // Refund/Exchange tracking
-  refundProcessed: { orderId: string; amount: number; reason: string } | null;
-  exchangeProcessed: { from: string; to: string } | null;
-  callbackScheduled: { date: string; time: string } | null;
-  escalatedTo: string | null;
 }
 
 export interface DashboardContextType extends DashboardState {
@@ -161,15 +155,6 @@ export interface DashboardContextType extends DashboardState {
   // Actions
   addLinkedTicket: (ticket: LinkedTicket) => void;
   setAppliedResolution: (resolution: string) => void;
-  setSentOffer: (offer: { type: string; value: string }) => void;
-  setRefundProcessed: (refund: {
-    orderId: string;
-    amount: number;
-    reason: string;
-  }) => void;
-  setExchangeProcessed: (exchange: { from: string; to: string }) => void;
-  setCallbackScheduled: (callback: { date: string; time: string }) => void;
-  setEscalatedTo: (supervisor: string) => void;
 }
 
 // Re-export ToolRendererProps from SDK for convenience

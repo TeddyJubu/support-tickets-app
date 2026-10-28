@@ -132,12 +132,12 @@ export function ResolutionSuggestionCard({
             {applied ? (
               <>
                 <CheckCircle2 className="w-4 h-4" />
-                Applied
+                Confirmed
               </>
             ) : (
               <>
                 <Zap className="w-4 h-4" />
-                Apply Resolution
+                Confirm plan
               </>
             )}
           </button>
@@ -166,7 +166,7 @@ export function ResolutionSuggestionCard({
           <div className="flex items-center gap-2">
             <Lightbulb className="w-5 h-5 text-yellow-500" />
             <span className="text-sm font-semibold text-foreground">
-              Confirm Resolution
+              Confirm Resolution Plan
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -255,7 +255,7 @@ export function ResolutionSuggestionCard({
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium"
           >
             <Check className="w-3 h-3" />
-            Apply Resolution
+            Confirm plan
           </button>
         </div>
       </div>
@@ -270,7 +270,7 @@ export function ResolutionSuggestionCard({
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-green-500" />
             <span className="text-sm font-semibold text-green-600">
-              Resolution Applied
+              Plan confirmed
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -323,8 +323,7 @@ export function ResolutionSuggestionCard({
         </div>
 
         <p className="text-xs text-muted-foreground pt-2 border-t border-border">
-          Follow these steps to resolve the customer&apos;s issue. The AI will assist
-          you along the way.
+          Nothing has been done yet: follow these steps to resolve the customer&apos;s issue.
         </p>
       </div>
     );

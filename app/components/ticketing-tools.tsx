@@ -4,6 +4,7 @@ import { Package, Users, Ticket as TicketIcon } from "lucide-react";
 import { useTools, useAIContext } from "@yourgpt/copilot-sdk/react";
 import { tool, success, type ToolRenderProps } from "@yourgpt/copilot-sdk/core";
 import { useDashboard } from "./context/dashboard-context";
+import { useSession } from "./context/session-context";
 import { useStore } from "./context/store-context";
 import { apiFetch } from "./api";
 import type { CustomerRisk, Sentiment, CustomerContext } from "./types";
@@ -29,25 +30,21 @@ import {
   TicketSummaryCard,
   SimilarTicketsCard,
   ResolutionSuggestionCard,
-  CompensationCard,
   CustomerRiskCard,
   SentimentCard,
   CustomerContextCard,
   CustomerProfileCard,
   OrderDetailsCard,
   KnowledgeBaseCard,
-  CallbackScheduledCard,
   EscalationCard,
   DraftResponseSkeleton,
   TicketSummarySkeleton,
   SimilarTicketsSkeleton,
-  CompensationSkeleton,
   ResolutionSkeleton,
   CustomerRiskSkeleton,
   SentimentSkeleton,
   CustomerContextSkeleton,
   KnowledgeBaseSkeleton,
-  CallbackSkeleton,
   EscalationSkeleton,
   CustomerProfileSkeleton,
   CardSkeleton,
@@ -173,30 +170,6 @@ function contextFor(detail: TicketDetail): CustomerContext {
   };
 }
 
-// Store-style compensation tiers based on how much the customer has spent
-function compensationOptions(detail: TicketDetail | null, severity: string) {
-  const spent = detail?.customer?.totalSpent ?? 0;
-  const high = severity === "high";
-  const credit = Math.max(10, Math.round(Math.min(spent * (high ? 0.1 : 0.05), 75)));
-  return [
-    {
-      type: "Store Credit",
-      value: formatMoney(credit),
-      description: `Credit toward the next order (${high ? "10%" : "5%"} of lifetime spend, capped at $75)`,
-    },
-    {
-      type: "Discount Code",
-      value: high ? "20% off" : "10% off",
-      description: "One-time code for the customer's next purchase",
-    },
-    {
-      type: "Free Shipping",
-      value: "Next order",
-      description: "Free standard shipping, or a prepaid label for a return/exchange",
-    },
-  ];
-}
-
 function productSnippet(p: Product) {
   return [
     formatPriceRange(p.priceMin, p.priceMax),
@@ -312,78 +285,27 @@ function DraftToolCard({ status, result }: ToolRenderProps) {
   );
 }
 
-function CompensationToolCard({ status, approval, result, args, error }: ToolRenderProps) {
-  const detail = useDashboard().ticketDetail;
-  const options = compensationOptions(detail, String(args.issueSeverity ?? "medium"));
-  const customerValue = formatMoney(detail?.customer?.totalSpent ?? 0);
-  const reasoning =
-    String(args.reasoning ?? "") ||
-    `${customerName(detail)} has spent ${customerValue} over ${detail?.customer?.totalOrders ?? 0} orders.`;
+// Escalation assigns the ticket to a real teammate: the picker lists the active staff
+function EscalationToolCard({ status, args, approval, result, error }: ToolRenderProps) {
+  const { staff, user } = useSession();
+  const teammates = staff.filter((m) => m.id !== user?.id);
   if (status === "approval-required" && approval) {
     return (
-      <CompensationCard
-        mode="select"
-        options={options}
-        reasoning={reasoning}
-        customerValue={customerValue}
-        onSelectOffer={(offer) => approval.onApprove({ selectedOffer: offer })}
+      <EscalationCard
+        reason={String(args.reason ?? "")}
+        priority={String(args.priority ?? "High")}
+        staff={teammates.length ? teammates : staff}
+        onAssign={(member) => approval.onApprove({ assignee: { id: member.id, name: member.displayName } })}
         onCancel={() => approval.onReject("Cancelled by user")}
       />
     );
   }
-  if (isLoading(status)) return <CompensationSkeleton />;
+  if (isLoading(status)) return <EscalationSkeleton />;
   if (status === "completed" && result?.data) {
-    const data = result.data as {
-      options: typeof options;
-      reasoning: string;
-      selectedOffer: (typeof options)[number];
-      customerValue: string;
-    };
-    return (
-      <CompensationCard
-        mode="sent"
-        options={data.options}
-        reasoning={data.reasoning || reasoning}
-        customerValue={data.customerValue}
-        selectedOffer={data.selectedOffer}
-      />
-    );
+    const data = result.data as { assignee: { id: number; name: string }; reason: string; priority: string };
+    return <EscalationCard reason={data.reason} priority={data.priority} staff={staff} assignedTo={data.assignee.name} />;
   }
-  if (status === "error") return <ErrorCard label="Compensation" error={error} />;
-  return null;
-}
-
-function CallbackToolCard({ status, approval, result, error }: ToolRenderProps) {
-  const profile = profileFor(useDashboard().ticketDetail);
-  if (status === "approval-required" && approval) {
-    return (
-      <CallbackScheduledCard
-        mode="select"
-        customerName={profile.name}
-        phone={profile.phone}
-        onSelectSlot={(slot) => approval.onApprove({ selectedSlot: slot })}
-        onCancel={() => approval.onReject("Cancelled by user")}
-      />
-    );
-  }
-  if (isLoading(status)) return <CallbackSkeleton />;
-  if (status === "completed" && result?.data) {
-    const data = result.data as {
-      selectedSlot: { date: string; time: string; displayDate: string };
-      customerName: string;
-      phone: string;
-    };
-    return (
-      <CallbackScheduledCard
-        mode="confirmed"
-        date={data.selectedSlot.displayDate || data.selectedSlot.date}
-        time={data.selectedSlot.time}
-        phone={data.phone}
-        customerName={data.customerName}
-      />
-    );
-  }
-  if (status === "error") return <ErrorCard label="Scheduling" error={error} />;
+  if (status === "error") return <ErrorCard label="Escalation" error={error} />;
   return null;
 }
 
@@ -909,18 +831,18 @@ export function TicketingTools() {
 
     suggest_resolution: tool({
       title: "Suggest resolution",
-      executingTitle: "Applying resolution...",
-      completedTitle: "Resolution applied",
+      executingTitle: "Saving the plan...",
+      completedTitle: "Resolution plan confirmed",
       description:
-        "Propose a resolution plan for the open ticket. The agent reviews and confirms it before it's applied. Base it on the intent, similar past tickets and customer value.",
+        "Propose a resolution plan for the open ticket: steps for the agent to carry out. The agent reviews and confirms it; confirming does nothing by itself. Base it on the intent, similar past tickets and customer value.",
       location: "client",
       needsApproval: true,
-      approvalMessage: "Review and confirm the suggested resolution",
+      approvalMessage: "Review and confirm the resolution plan",
       aiResponseMode: "none",
       aiContext: (result) => {
         const data = result.data as { suggestion: string; confirmed: boolean } | undefined;
         return data?.confirmed
-          ? `[Resolution APPLIED: "${data.suggestion}". Follow the agreed steps.]`
+          ? `[Resolution plan CONFIRMED: "${data.suggestion}". Nothing has been done yet: the agent carries out the steps.]`
           : "[Resolution suggestion cancelled by user]";
       },
       inputSchema: {
@@ -988,163 +910,49 @@ export function TicketingTools() {
       },
     }),
 
-    calculate_compensation: tool({
-      title: "Calculate compensation",
-      executingTitle: "Sending offer...",
-      completedTitle: "Compensation offer sent",
-      description:
-        "Offer the customer compensation (store credit, discount code or free shipping) sized to their lifetime spend. The agent picks which offer to send.",
-      location: "client",
-      needsApproval: true,
-      approvalMessage: "Select a compensation offer to send to the customer",
-      aiResponseMode: "none",
-      aiContext: (result) => {
-        const data = result.data as
-          | { selectedOffer?: { type: string; value: string }; customerValue: string }
-          | undefined;
-        return data?.selectedOffer
-          ? `[Compensation SENT: "${data.selectedOffer.type}" (${data.selectedOffer.value}) for a ${data.customerValue} LTV customer.]`
-          : "[Compensation cancelled by user]";
-      },
-      inputSchema: {
-        type: "object",
-        properties: {
-          issueSeverity: {
-            type: "string",
-            enum: ["low", "medium", "high"],
-            description: "Severity of the issue",
-          },
-          reasoning: { type: "string", description: "Why compensation is appropriate" },
-        },
-      },
-      handler: async (params, context) => {
-        const selectedOffer = context?.approvalData?.selectedOffer as
-          | { type: string; value: string; description: string }
-          | undefined;
-        if (!selectedOffer) return { success: false, error: "No offer selected" };
-        dashboard.setSentOffer(selectedOffer);
-        const detail = dashboard.getTicketDetail();
-        return success({
-          options: compensationOptions(detail, String(params.issueSeverity ?? "medium")),
-          reasoning: String(params.reasoning ?? ""),
-          selectedOffer,
-          customerValue: formatMoney(detail?.customer?.totalSpent ?? 0),
-        });
-      },
-      render: (props) => <CompensationToolCard {...props} />,
-    }),
-
-    schedule_callback: tool({
-      title: "Schedule callback",
-      executingTitle: "Scheduling callback...",
-      completedTitle: "Callback scheduled",
-      description:
-        "Schedule a phone callback with the customer. The agent picks an available time slot.",
-      location: "client",
-      needsApproval: true,
-      approvalMessage: "Select a time slot for the callback",
-      aiResponseMode: "none",
-      aiContext: (result) => {
-        const data = result.data as
-          | { selectedSlot?: { date: string; time: string }; customerName: string }
-          | undefined;
-        return data?.selectedSlot
-          ? `[Callback SCHEDULED: ${data.selectedSlot.date} at ${data.selectedSlot.time} with ${data.customerName}.]`
-          : "[Callback scheduling cancelled by user]";
-      },
-      inputSchema: {
-        type: "object",
-        properties: {
-          preferredDate: { type: "string", description: "Preferred date (optional hint)" },
-          preferredTime: { type: "string", description: "Preferred time (optional hint)" },
-        },
-      },
-      handler: async (_params, context) => {
-        const selectedSlot = context?.approvalData?.selectedSlot as
-          | { date: string; time: string; displayDate: string }
-          | undefined;
-        if (!selectedSlot) return { success: false, error: "No time slot selected" };
-        dashboard.setCallbackScheduled({ date: selectedSlot.date, time: selectedSlot.time });
-        const profile = profileFor(dashboard.getTicketDetail());
-        return success({
-          scheduled: true,
-          selectedSlot,
-          customerName: profile.name,
-          phone: profile.phone,
-        });
-      },
-      render: (props) => <CallbackToolCard {...props} />,
-    }),
-
     escalate_ticket: tool({
       title: (args) => `Escalate (${args.priority || "High"})`,
-      executingTitle: "Assigning to supervisor...",
+      executingTitle: "Assigning the ticket...",
       completedTitle: "Ticket escalated",
       description:
-        "Escalate the open ticket to a supervisor. The agent picks the supervisor before it completes.",
+        "Escalate the open ticket: the agent picks a teammate, and the ticket is assigned to them, its priority raised (never lowered) and the reason added as an internal note.",
       location: "client",
       needsApproval: true,
-      approvalMessage: "Select a supervisor to escalate this ticket to",
+      approvalMessage: "Pick the teammate to escalate this ticket to",
       aiResponseMode: "none",
       aiContext: (result) => {
-        const data = result.data as
-          | { supervisor: { name: string; role: string }; reason: string }
-          | undefined;
-        return data?.supervisor
-          ? `[Escalation COMPLETED: escalated to ${data.supervisor.name} (${data.supervisor.role}). Reason: ${data.reason}.]`
+        const data = result.data as { assignee: { name: string }; reason: string; priority: string } | undefined;
+        return data?.assignee
+          ? `[Ticket assigned to ${data.assignee.name}, priority ${data.priority}, with an internal note: ${data.reason}. Nothing was sent to the customer.]`
           : "[Escalation failed or was cancelled]";
       },
       inputSchema: {
         type: "object",
         properties: {
-          reason: { type: "string", description: "Reason for escalation" },
+          reason: { type: "string", description: "Reason for escalation (saved as an internal note)" },
           priority: { type: "string", description: "Priority level", enum: ["High", "Critical"] },
         },
         required: ["reason", "priority"],
       },
       handler: async (params, context) => {
-        const supervisor = context?.approvalData?.supervisor as
-          | { name: string; role: string }
-          | undefined;
-        if (!supervisor) return { success: false, error: "No supervisor selected" };
-        dashboard.setEscalatedTo(`${supervisor.name} (${supervisor.role})`);
-        return success({
-          supervisor,
-          reason: params.reason as string,
-          priority: params.priority as string,
-        });
-      },
-      render: (props) => {
-        const { status, args, approval, result } = props;
-        if (status === "approval-required" && approval) {
-          return (
-            <EscalationCard
-              reason={args.reason as string}
-              priority={args.priority as string}
-              onAssign={(supervisor) => approval.onApprove({ supervisor })}
-              onCancel={() => approval.onReject("Cancelled by user")}
-            />
-          );
+        const assignee = context?.approvalData?.assignee as { id: number; name: string } | undefined;
+        if (!assignee) return { success: false, error: "No teammate selected" };
+        const detail = requireTicket();
+        const reason = String(params.reason ?? "").trim() || "Escalated from the copilot";
+        const wanted = String(params.priority ?? "High").toLowerCase() === "critical" ? "critical" : "high";
+        const rank: Record<string, number> = { low: 0, normal: 1, high: 2, critical: 3 };
+        // Escalate only: a ticket already at critical stays there
+        const priority = (rank[detail.ticket.priority ?? "normal"] ?? 1) >= rank[wanted] ? (detail.ticket.priority ?? wanted) : wanted;
+        const changes: Record<string, unknown> = { assigneeId: assignee.id, priority };
+        if (!(await dashboard.updateTicket(changes, detail.ticket.id))) {
+          return { success: false, error: "The ticket couldn't be assigned" };
         }
-        if (isLoading(status)) return <EscalationSkeleton />;
-        if (status === "completed" && result?.data) {
-          const data = result.data as {
-            supervisor: { name: string; role: string };
-            reason: string;
-            priority: string;
-          };
-          return (
-            <EscalationCard
-              reason={data.reason}
-              priority={data.priority}
-              initialAssigned={true}
-              initialSupervisor={data.supervisor.name}
-            />
-          );
+        if (!(await dashboard.addNote(`Escalated to ${assignee.name} (${priority}): ${reason}`))) {
+          return { success: false, error: `Assigned to ${assignee.name}, but the note wasn't saved` };
         }
-        if (status === "error") return <ErrorCard label="Escalation" error={props.error} />;
-        return null;
+        return success({ assignee, reason, priority });
       },
+      render: (props) => <EscalationToolCard {...props} />,
     }),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
