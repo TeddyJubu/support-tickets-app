@@ -415,8 +415,14 @@ export function appendMessage(
         `UPDATE sim_tickets SET status = 'pending', updated_at = datetime('now'),
            first_response_at = coalesce(first_response_at, datetime('now')) WHERE id = ?`,
       ).run(ticketId);
-      // The customer has been answered: an unused AI draft is out of date
+      // The customer has been answered: an unused AI draft is out of date, and so is one still
+      // waiting to be written (a job already running checks again before it saves)
       d.prepare(`UPDATE drafts SET state = 'superseded', updated_at = datetime('now') WHERE ticket_id = ? AND state = 'ready'`).run(ticketId);
+      d.prepare(
+        `UPDATE jobs SET state = 'skipped', finished_at = datetime('now'), updated_at = datetime('now'),
+           detail = json_patch(coalesce(detail, '{}'), json_object('reason', 'a reply was already sent'))
+         WHERE ticket_id = ? AND state IN ('pending', 'retry_wait')`,
+      ).run(ticketId);
     } else if (author === "customer") {
       // A customer reply reopens the ticket and wakes it from snooze
       d.prepare(

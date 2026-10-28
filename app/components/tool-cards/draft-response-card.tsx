@@ -17,7 +17,6 @@ export function DraftResponseCard({
   onSendEmail,
 }: DraftResponseCardProps) {
   const [copied, setCopied] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
   const [usedAsDraft, setUsedAsDraft] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -27,12 +26,8 @@ export function DraftResponseCard({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSendEmail = () => {
-    if (onSendEmail) {
-      onSendEmail(subject, body);
-      setEmailSent(true);
-    }
-  };
+  // Opens Review for the open ticket: nothing is sent until staff confirm there
+  const handleSendEmail = () => onSendEmail?.(subject, body);
 
   const handleUseReply = () => {
     onUseReply();
@@ -94,20 +89,10 @@ export function DraftResponseCard({
           {onSendEmail && (
             <button
               onClick={handleSendEmail}
-              disabled={emailSent}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-xs font-medium disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-xs font-medium"
             >
-              {emailSent ? (
-                <>
-                  <CheckCircle2 className="w-3 h-3" />
-                  Email Sent
-                </>
-              ) : (
-                <>
-                  <Send className="w-3 h-3" />
-                  Send Email
-                </>
-              )}
+              <Send className="w-3 h-3" />
+              Review &amp; send
             </button>
           )}
         </div>

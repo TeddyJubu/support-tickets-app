@@ -187,7 +187,11 @@ export function retryDraft(d: DatabaseSync, ticketId: string) {
       .get(ticketId) as Row;
     if (latest.id == null) return { queued: false, jobId: null, reason: "There is no customer message to answer" };
     d.prepare(`UPDATE drafts SET state = 'superseded', updated_at = datetime('now') WHERE ticket_id = ? AND state = 'ready'`).run(ticketId);
-    const res = d.prepare(`INSERT INTO jobs (ticket_id, message_id, detail) VALUES (?, ?, '{"retry":true}')`).run(ticketId, Number(latest.id));
+    // Asked for after a reply: only a reply sent after this request makes the draft late
+    const lastReply = d.prepare(`SELECT max(id) AS id FROM sim_messages WHERE ticket_id = ? AND author = 'agent'`).get(ticketId) as Row;
+    const res = d
+      .prepare(`INSERT INTO jobs (ticket_id, message_id, detail) VALUES (?, ?, ?)`)
+      .run(ticketId, Number(latest.id), JSON.stringify({ retry: true, afterReply: Number(lastReply.id ?? 0) }));
     return { queued: true, jobId: Number(res.lastInsertRowid), reason: null };
   });
 }

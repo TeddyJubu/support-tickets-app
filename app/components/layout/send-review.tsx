@@ -52,6 +52,8 @@ const RECOVERY: Record<string, string> = {
   newer_message: "Close this and read the customer's new message, then review again.",
   changed_reply: "Close this and review the reply again.",
   changed_recipient: "Close this and review the reply again.",
+  changed_subject: "Close this and review the reply again.",
+  already_answered: "Close this and read the reply that was just sent before writing another.",
   review_expired: "Close this and review the reply again.",
   no_review: "Close this and review the reply again.",
   pending_send: "Close this and check the earlier reply's status above the reply box.",
@@ -189,12 +191,18 @@ export function PendingSendBanner() {
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
           <p className="font-medium">
-            {pending.uncertain ? `A reply from ${at} may or may not have reached the customer.` : `A reply from ${at} is still sending…`}
+            {pending.hasMessageId
+              ? `A reply from ${at} was emailed to the customer but isn't saved in the conversation yet.`
+              : pending.uncertain
+                ? `A reply from ${at} may or may not have reached the customer.`
+                : `A reply from ${at} is still sending…`}
           </p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">&ldquo;{pending.excerpt}&rdquo;</p>
           <p className="mt-1 text-xs text-muted-foreground">
             New replies are paused until this is settled, so the customer never gets the same email twice.
-            {pending.uncertain && " Check the support mailbox's Sent folder or ask the customer, then record what happened."}
+            {pending.hasMessageId
+              ? " The email service accepted it: record it as sent to add it to the conversation."
+              : pending.uncertain && " Check the support mailbox's Sent folder or ask the customer, then record what happened."}
           </p>
         </div>
       </div>
@@ -228,9 +236,11 @@ export function PendingSendBanner() {
               <button type="button" onClick={() => setAsking("sent")} className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium ring-1 ring-border hover:bg-accent">
                 <CheckCircle2 className="size-3.5" /> It went out
               </button>
-              <button type="button" onClick={() => setAsking("not_sent")} className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium ring-1 ring-border hover:bg-accent">
-                <X className="size-3.5" /> It didn&apos;t go out
-              </button>
+              {!pending.hasMessageId && (
+                <button type="button" onClick={() => setAsking("not_sent")} className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium ring-1 ring-border hover:bg-accent">
+                  <X className="size-3.5" /> It didn&apos;t go out
+                </button>
+              )}
             </>
           ))}
       </div>

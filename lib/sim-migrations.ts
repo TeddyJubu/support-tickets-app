@@ -424,4 +424,14 @@ export const SIM_MIGRATIONS: Migration[] = [
         ALTER TABLE sim_tickets ADD COLUMN product_handle TEXT;
       `),
   },
+  {
+    version: 13,
+    name: "send reviews remember the last reply and the subject",
+    up: (db) =>
+      db.exec(`
+        -- A reply sent after the review (by anyone) or a renamed subject cancels the review
+        ALTER TABLE send_reviews ADD COLUMN last_reply_id INTEGER;
+        ALTER TABLE send_reviews ADD COLUMN subject TEXT;
+      `),
+  },
 ];

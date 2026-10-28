@@ -4,7 +4,7 @@
 //   npm run simulate -- --count 5          open 5 new tickets
 //   npm run simulate -- --follow-ups       answer agent replies that are waiting on the customer
 //   npm run simulate -- --loop             keep going: new tickets + follow-ups every --interval seconds
-//   npm run simulate -- --reset            delete all simulated tickets and customers
+//   npm run simulate -- --reset            delete all simulated tickets and customers (email tickets stay)
 //
 // Options:
 //   --count N        tickets per round (default 3)
@@ -28,6 +28,7 @@ import { join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
+import { resetSimulated } from "./sim-reset.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -293,17 +294,9 @@ async function runNewTickets(count, runId) {
 async function main() {
   if (args.reset) {
     const sim = new DatabaseSync(join(root, "data/sim.db"));
-    // Rows that reference tickets, messages or customers go first (foreign keys are enforced)
-    const dependents = [
-      "attachments", "drafts", "jobs", "ticket_tags", "ticket_reads", "sim_email_ids", "sim_email_outbox",
-      "store_snapshots", "sim_returns", "lessons", "send_reviews", "notifications",
-    ];
-    const exists = (t) => sim.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
-    sim.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");
-    for (const t of dependents) if (exists(t)) sim.exec(`DELETE FROM ${t}`);
-    sim.exec("DELETE FROM sim_messages; DELETE FROM sim_tickets; DELETE FROM sim_customers; DELETE FROM sqlite_sequence WHERE name = 'sim_tickets'; COMMIT");
+    const { tickets, customers, kept } = resetSimulated(sim);
     sim.close();
-    console.log("Deleted all simulated tickets and customers.");
+    console.log(`Deleted ${tickets} simulated tickets and ${customers} simulated customers. Kept ${kept} email and staff tickets.`);
     return;
   }
 

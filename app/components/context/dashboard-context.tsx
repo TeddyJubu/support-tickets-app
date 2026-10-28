@@ -210,11 +210,6 @@ const emptyTicketState = {
   customerContext: null,
   linkedTickets: [] as LinkedTicket[],
   appliedResolution: null,
-  sentOffer: null,
-  refundProcessed: null,
-  exchangeProcessed: null,
-  callbackScheduled: null,
-  escalatedTo: null,
 };
 
 export function DashboardProvider({ children }: { children: React.ReactNode }) {
@@ -774,35 +769,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     setState((prev) => ({ ...prev, appliedResolution: resolution }));
   }, []);
 
-  const setSentOffer = useCallback((offer: { type: string; value: string }) => {
-    setState((prev) => ({ ...prev, sentOffer: offer }));
-  }, []);
-
-  const setRefundProcessed = useCallback(
-    (refund: { orderId: string; amount: number; reason: string }) => {
-      setState((prev) => ({ ...prev, refundProcessed: refund }));
-    },
-    [],
-  );
-
-  const setExchangeProcessed = useCallback(
-    (exchange: { from: string; to: string }) => {
-      setState((prev) => ({ ...prev, exchangeProcessed: exchange }));
-    },
-    [],
-  );
-
-  const setCallbackScheduled = useCallback(
-    (callback: { date: string; time: string }) => {
-      setState((prev) => ({ ...prev, callbackScheduled: callback }));
-    },
-    [],
-  );
-
-  const setEscalatedTo = useCallback((supervisor: string) => {
-    setState((prev) => ({ ...prev, escalatedTo: supervisor }));
-  }, []);
-
   return (
     <DashboardContext.Provider
       value={{
@@ -860,11 +826,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         setCustomerContext,
         addLinkedTicket,
         setAppliedResolution,
-        setSentOffer,
-        setRefundProcessed,
-        setExchangeProcessed,
-        setCallbackScheduled,
-        setEscalatedTo,
       }}
     >
       {children}

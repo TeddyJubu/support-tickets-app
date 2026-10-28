@@ -40,7 +40,7 @@ npm run simulate -- --follow-ups                      # customers answer tickets
 npm run simulate -- --loop --interval 120 --count 2   # keep going until stopped
 npm run simulate -- --intent Return --count 3         # only replay one kind of request (Return, Damaged, Cancel, Status…)
 npm run simulate -- --count 1 --dry-run               # show what would be sent, write nothing
-npm run simulate -- --reset                           # delete simulated tickets and customers
+npm run simulate -- --reset                           # delete simulated tickets and customers (email tickets stay)
 ```
 
 A typical test cycle: `simulate --count N` → the worker drafts replies → handle tickets in the UI (Use draft, Review & send) or with `reply` → `simulate --follow-ups` → `show` to inspect → `close`. Run long loops in the background and stop them when done. Each simulated customer message costs one Workers AI draft; `AUTO_DRAFTS=0` in `.env.local` turns drafting off.

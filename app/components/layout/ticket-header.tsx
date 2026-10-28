@@ -5,11 +5,7 @@ import {
   ChevronUp,
   ChevronDown,
   Zap,
-  DollarSign,
   RotateCcw,
-  ArrowRightLeft,
-  PhoneCall,
-  AlertTriangle,
   CheckCircle2,
   ExternalLink,
   Lock,
@@ -132,11 +128,6 @@ export function TicketHeader() {
     ticketStatus,
     sentiment,
     appliedResolution,
-    sentOffer,
-    refundProcessed,
-    exchangeProcessed,
-    callbackScheduled,
-    escalatedTo,
     ticketDetail,
     detailLoading,
     selectAdjacentTicket,
@@ -161,9 +152,6 @@ export function TicketHeader() {
         `Opened ${formatDate(ticket.createdAt)}`,
       ].filter(Boolean)
     : [];
-
-  const hasActions =
-    appliedResolution || sentOffer || refundProcessed || exchangeProcessed || callbackScheduled || escalatedTo;
 
   return (
     <header className="relative z-20 border-b border-border bg-background">
@@ -318,38 +306,11 @@ export function TicketHeader() {
 
       {ticket && editable && <TriageBar ticket={ticket} />}
 
-      {hasActions && (
+      {appliedResolution && (
         <div className="flex flex-wrap items-center gap-2 px-4 pb-2.5">
-          {appliedResolution && (
-            <ActionChip icon={Zap} tone="bg-chart-1/10 text-chart-1 ring-chart-1/25">
-              {appliedResolution}
-            </ActionChip>
-          )}
-          {sentOffer && (
-            <ActionChip icon={DollarSign} tone="bg-success/10 text-success ring-success/25">
-              {sentOffer.type}: {sentOffer.value}
-            </ActionChip>
-          )}
-          {refundProcessed && (
-            <ActionChip icon={RotateCcw} tone="bg-info/10 text-info ring-info/25">
-              Refund: ${refundProcessed.amount}
-            </ActionChip>
-          )}
-          {exchangeProcessed && (
-            <ActionChip icon={ArrowRightLeft} tone="bg-warning/10 text-warning ring-warning/25">
-              Exchange: {exchangeProcessed.to}
-            </ActionChip>
-          )}
-          {callbackScheduled && (
-            <ActionChip icon={PhoneCall} tone="bg-chart-2/10 text-chart-2 ring-chart-2/25">
-              Callback: {callbackScheduled.date} {callbackScheduled.time}
-            </ActionChip>
-          )}
-          {escalatedTo && (
-            <ActionChip icon={AlertTriangle} tone="bg-destructive/10 text-destructive ring-destructive/25">
-              Escalated: {escalatedTo}
-            </ActionChip>
-          )}
+          <ActionChip icon={Zap} tone="bg-chart-1/10 text-chart-1 ring-chart-1/25">
+            Plan: {appliedResolution}
+          </ActionChip>
         </div>
       )}
     </header>

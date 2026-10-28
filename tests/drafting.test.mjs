@@ -655,3 +655,40 @@ test("if it still won't search, the first draft stays and staff are warned", asy
   assert.match(d.body, /Monsey/);
   assert.ok(d.flags.some((f) => f.startsWith("written without a knowledge-base lookup")));
 });
+
+test("a staff reply cancels a waiting draft job; a running one doesn't save a late draft", async () => {
+  clearQueue();
+  fakeAi((t) => wrap(t, "Hi,\n\nOrders ship in 2 days."));
+  // Waiting (here: retrying after an AI outage) when staff answer by hand
+  const waiting = ticket("Staff-reply test: where is my order?");
+  raw.prepare(`UPDATE jobs SET state = 'retry_wait' WHERE ticket_id = ?`).run(waiting);
+  simDb.addSimMessage(waiting, "agent", "Answered by hand", "Dana");
+  assert.deepEqual(jobsFor(waiting).map((j) => j.state), ["skipped"]);
+  assert.equal(simDb.getSimTicketDetail(waiting).ai.job.reason, "a reply was already sent");
+
+  // Running when staff answer: the draft is refused under the write lock
+  clearQueue();
+  let id;
+  fakeAi((t) => {
+    simDb.addSimMessage(id, "agent", "Answered by hand while drafting", "Dana");
+    return wrap(t, "Hi,\n\nOrders ship in 2 days.");
+  });
+  id = ticket("Staff-reply test 2: where is my order?");
+  const job = queue.claimNextJob(db, "t");
+  const outcome = await run.processJob(job);
+  assert.equal(outcome.state, "skipped");
+  assert.equal(raw.prepare(`SELECT count(*) AS c FROM drafts WHERE job_id = ?`).get(job.id).c, 0);
+  assert.equal(jobsFor(id).at(-1).state, "skipped");
+});
+
+test("staff can still ask for a draft after replying", async () => {
+  clearQueue();
+  fakeAi((t) => wrap(t, "Hi,\n\nOrders ship in 2 days."));
+  const id = ticket("Draft-after-reply test: where is my order?");
+  simDb.addSimMessage(id, "agent", "Quick holding reply", "Dana");
+  const res = await call(retryRoute.POST, { method: "POST", params: { id }, headers: { cookie: staff.cookie } });
+  assert.equal(res.status, 202);
+  const outcome = await run.processJob(queue.claimNextJob(db, "t"));
+  assert.equal(outcome.state, "done");
+  assert.equal(simDb.getSimTicketDetail(id).ai.draft.state, "ready");
+});
