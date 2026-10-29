@@ -1,7 +1,8 @@
 // Sign-in gate for the whole site (Next.js 16 proxy, runs on Node.js).
 //   - public: the login page and endpoint, health/readiness, and the SES inbound and Shopify
 //     webhooks (which check their own signatures)
-//   - /api/helpdesk/*: a staff session, or the simulator/CLI bearer key (SIM_API_KEY)
+//   - the simulator's own endpoints (SIMULATOR below) also take the simulator/CLI bearer key
+//     (SIM_API_KEY); they touch simulated tickets only. No other route accepts the key.
 //   - everything else: a staff session; pages redirect to /login, APIs answer 401
 // Cookie-authenticated writes must come from this site (Origin check) to stop CSRF.
 
@@ -13,6 +14,15 @@ const PUBLIC = ["/login", "/api/auth/login", "/api/health", "/api/ready", "/api/
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const isPublic = (path: string) => PUBLIC.some((p) => path === p || path.startsWith(`${p}/`));
+
+// What the simulator/CLI key opens: open a simulated ticket, write on one, list those waiting on
+// the customer. Each handler checks the key again and refuses tickets that aren't simulated.
+const SIMULATOR: Array<[method: string, path: RegExp]> = [
+  ["POST", /^\/api\/helpdesk\/sim\/tickets$/],
+  ["POST", /^\/api\/helpdesk\/sim\/tickets\/SIM-\d+\/messages$/],
+  ["GET", /^\/api\/helpdesk\/sim\/awaiting$/],
+];
+const isSimulatorPath = (method: string, path: string) => SIMULATOR.some(([m, p]) => m === method && p.test(path));
 
 function sameOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
@@ -30,7 +40,7 @@ export function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   if (isPublic(path)) return NextResponse.next();
 
-  if (path.startsWith("/api/helpdesk/") && isSimulatorRequest(request)) return NextResponse.next();
+  if (isSimulatorPath(request.method, path) && isSimulatorRequest(request)) return NextResponse.next();
 
   if (staffFromRequest(request)) {
     if (!SAFE_METHODS.has(request.method) && !sameOrigin(request)) {

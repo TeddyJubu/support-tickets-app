@@ -179,12 +179,14 @@ test("a staff session passes; cross-site writes are blocked", async () => {
   assert.equal(run("/api/helpdesk/sim/tickets/SIM-1/messages", { method: "POST", headers: { ...https, origin: "http://helpdesk.test" } }).status, 403);
 });
 
-test("the simulator key opens /api/helpdesk only", () => {
+test("the simulator key opens the simulator's endpoints only", () => {
   const bearer = { authorization: `Bearer ${process.env.SIM_API_KEY}` };
-  assert.equal(run("/api/helpdesk/tickets", { headers: bearer }).headers.get("x-middleware-next"), "1");
+  assert.equal(run("/api/helpdesk/sim/tickets", { method: "POST", headers: bearer }).headers.get("x-middleware-next"), "1");
+  assert.equal(run("/api/helpdesk/sim/awaiting", { headers: bearer }).headers.get("x-middleware-next"), "1");
+  assert.equal(run("/api/helpdesk/tickets", { headers: bearer }).status, 401);
   assert.equal(run("/api/chat", { method: "POST", headers: bearer }).status, 401);
   assert.equal(run("/", { headers: bearer }).status, 307);
-  assert.equal(run("/api/helpdesk/tickets", { headers: { authorization: "Bearer wrong" } }).status, 401);
+  assert.equal(run("/api/helpdesk/sim/awaiting", { headers: { authorization: "Bearer wrong" } }).status, 401);
 });
 
 test("behind Caddy the login redirect uses the public host and https", () => {

@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // Customer rail: the ticket's Shopify customer, orders and returns (staff only, via proxy.ts)
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  // Staff only: the simulator/CLI key opens /api/helpdesk/* but must not read store data
+  // Staff only: store data never goes to the simulator/CLI key
   const user = requireStaff(request);
   if (user instanceof Response) return user;
   const { id } = await params;

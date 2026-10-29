@@ -1,8 +1,8 @@
-// Who is making a request: a signed-in staff member (session cookie), the simulator/CLI
-// (SIM_API_KEY bearer token), or nobody. Used by proxy.ts and by route handlers.
+// Who is making a request: a signed-in staff member (session cookie) or nobody. Used by proxy.ts
+// and by route handlers. The simulator/CLI bearer key (SIM_API_KEY) is checked separately
+// (lib/sim-auth.ts) and only by the simulator's own endpoints: it never counts as staff.
 
 import { SESSION_COOKIE, sessionUser, type StaffUser } from "./auth";
-import { isSimulatorRequest } from "./sim-auth";
 
 export function readCookie(request: Request, name: string) {
   for (const part of (request.headers.get("cookie") ?? "").split(";")) {
@@ -18,23 +18,10 @@ export function staffFromRequest(request: Request): StaffUser | null {
   return sessionUser(sessionToken(request));
 }
 
-export type Actor = { kind: "staff"; user: StaffUser; name: string } | { kind: "system"; name: "simulator" };
-
-/** Staff session first; the bearer key identifies the simulator and the server CLI */
-export function actorFromRequest(request: Request): Actor | null {
-  const user = staffFromRequest(request);
-  if (user) return { kind: "staff", user, name: user.username };
-  if (isSimulatorRequest(request)) return { kind: "system", name: "simulator" };
-  return null;
-}
-
-/** Staff or the operator CLI/simulator key: for read routes the CLI also uses */
-export const isAgentRequest = (request: Request) => actorFromRequest(request) !== null;
-
 export const signInRequired = () => Response.json({ error: "Sign in required" }, { status: 401 });
 export const forbidden = (message = "Not allowed") => Response.json({ error: message }, { status: 403 });
 
-/** For handlers that must act as a person (sending, editing): returns the user or a 401 */
+/** For every handler that returns customer, store, ticket or draft data, or acts as a person: the user or a 401 */
 export function requireStaff(request: Request): StaffUser | Response {
   return staffFromRequest(request) ?? signInRequired();
 }

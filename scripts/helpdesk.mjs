@@ -8,7 +8,7 @@
 //   tickets [--sim|--history] [--q TEXT] [--limit N] [--offset N]
 //   show <ticketId>                 one ticket with customer, messages, history
 //   reply <ticketId> <text>         reply as the agent (simulated tickets only)
-//   customer <ticketId> <text>      reply as the simulated customer
+//   customer <ticketId> <text>      reply as the simulated customer (simulated tickets only)
 //   close <ticketId> | reopen <ticketId> | pending <ticketId>
 //   similar <ticketId>              similar historical tickets
 //   products <query> | customers <query>   search the store export
@@ -25,8 +25,10 @@
 //   user password <username>        set a new password (signs the user out everywhere)
 //   user disable|enable <username>
 //
-// Talks to the running helpdesk (SIM_HELPDESK_URL, default http://127.0.0.1:3100)
-// using SIM_API_KEY from .env.local. Never prints secret values.
+// Runs on the server: reads data/ directly (tickets, customers, products, staff, backups) and
+// triages there as "cli". Only reply and customer post through the running helpdesk
+// (SIM_HELPDESK_URL, default http://127.0.0.1:3100) with SIM_API_KEY from .env.local, which
+// opens nothing but simulated tickets. Never prints secret values.
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -55,6 +57,7 @@ const flag = (name) => {
 const positional = argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.match(/^--(q|limit|offset|name|email|key)$/));
 const [command, ...rest] = positional;
 
+// The simulator's endpoints only (proxy.ts): the key can't read customer, store or draft data
 async function api(path, init = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
@@ -122,6 +125,17 @@ async function backupLib() {
   return import("../lib/ops/backup.ts");
 }
 
+// The inbox (data/sim.db) and the store export (data/helpdesk.db), on this server
+async function lib() {
+  (await import("./env.ts")).loadEnv(root);
+  const [inbox, archive, triage] = await Promise.all([
+    import("../lib/sim-db.ts"),
+    import("../lib/helpdesk-db.ts"),
+    import("../lib/triage.ts"),
+  ]);
+  return { inbox, archive, triage };
+}
+
 const ago = (iso) => {
   const h = Math.round((Date.now() - Date.parse(iso)) / 3600e3);
   return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
@@ -137,16 +151,13 @@ const commands = {
     }
     const site = await fetch(`${SITE}/`).then((r) => r.status).catch(() => 0);
     const ready = await fetch(`${BASE}/api/ready`).then((r) => r.json()).catch(() => null);
-    const [sim, hist, store] = await Promise.all([
-      api("/api/helpdesk/tickets?source=sim&limit=1"),
-      api("/api/helpdesk/tickets?limit=1"),
-      shopifyStatus(),
-    ]);
+    const { inbox, archive } = await lib();
+    const sim = inbox.listSimTickets({ limit: 1 });
+    const hist = archive.listTickets({ limit: 1 });
     // The inbox holds simulated, real-email and staff tickets: count each channel separately
-    const [simOnly, emailOnly] = await Promise.all([
-      api("/api/helpdesk/tickets?source=sim&channel=simulator&limit=1"),
-      api("/api/helpdesk/tickets?source=sim&channel=email&limit=1"),
-    ]);
+    const simOnly = inbox.listSimTickets({ limit: 1, channel: "simulator" });
+    const emailOnly = inbox.listSimTickets({ limit: 1, channel: "email" });
+    const store = await shopifyStatus();
     const c = sim.counts ?? {};
     const byStatus = { open: c.open ?? 0, pending: c.pending ?? 0, closed: c.closed ?? 0 };
     const { listBackups, offsiteStatus } = await backupLib();
@@ -185,20 +196,23 @@ const commands = {
   },
 
   async tickets() {
-    const params = new URLSearchParams({
-      source: argv.includes("--history") ? "history" : "sim",
+    const { inbox, archive } = await lib();
+    const source = argv.includes("--history") ? "history" : "sim";
+    const query = {
       q: flag("q") ?? "",
-      limit: flag("limit") ?? "20",
-      offset: flag("offset") ?? "0",
-    });
-    const data = await api(`/api/helpdesk/tickets?${params}`);
+      limit: Math.min(Number(flag("limit")) || 20, 100),
+      offset: Math.max(Number(flag("offset")) || 0, 0),
+    };
+    const data = source === "sim" ? inbox.listSimTickets(query) : archive.listTickets(query);
     out(data, () =>
-      [`${data.total} ${params.get("source")} tickets (showing ${data.tickets.length})`, ...data.tickets.map(ticketLine)].join("\n"),
+      [`${data.total} ${source} tickets (showing ${data.tickets.length})`, ...data.tickets.map(ticketLine)].join("\n"),
     );
   },
 
   async show(id = need(rest[0], "show <ticketId>")) {
-    const d = await api(`/api/helpdesk/tickets/${encodeURIComponent(id)}`);
+    const { inbox, archive } = await lib();
+    const d = inbox.isSimTicketId(id) ? inbox.getSimTicketDetail(id) : archive.getTicketDetail(id);
+    if (!d) throw new Error(`no ticket ${id}`);
     out(d, () => {
       const t = d.ticket;
       const c = d.customer;
@@ -246,17 +260,20 @@ const commands = {
   },
 
   async similar(id = need(rest[0], "similar <ticketId>")) {
-    const d = await api(`/api/helpdesk/tickets/${encodeURIComponent(id)}/similar?limit=8`);
+    const { inbox, archive } = await lib();
+    // Simulated tickets are compared through the historical ticket they replay
+    const baseId = inbox.isSimTicketId(id) ? inbox.getSimTicketDetail(id)?.ticket.sourceTicketId : id;
+    const d = { tickets: baseId ? archive.findSimilarTickets(baseId, 8) : [] };
     out(d, () => d.tickets.map((t) => `${String(t.similarity).padStart(3)}%  ${ticketLine(t)}`).join("\n") || "no similar tickets");
   },
 
   async products(q = need(rest.join(" "), "products <query>")) {
-    const d = await api(`/api/helpdesk/products?limit=10&q=${encodeURIComponent(q)}`);
+    const d = { products: (await lib()).archive.searchProducts(q, 10) };
     out(d, () => d.products.map((p) => `${p.title}  $${p.priceMin}${p.priceMax !== p.priceMin ? `–$${p.priceMax}` : ""}  stock ${p.inventory}  [${p.status}]  ${p.options ?? ""}`).join("\n") || "no products");
   },
 
   async customers(q = need(rest.join(" "), "customers <query>")) {
-    const d = await api(`/api/helpdesk/customers?limit=10&q=${encodeURIComponent(q)}`);
+    const d = { customers: (await lib()).archive.searchCustomers(q, 10) };
     out(d, () => d.customers.map((c) => `${c.name ?? "?"} <${c.email}>  $${c.totalSpent} / ${c.totalOrders} orders  ${[c.city, c.province].filter(Boolean).join(", ")}`).join("\n") || "no customers");
   },
 
@@ -422,11 +439,11 @@ async function askPassword(prompt) {
   });
 }
 
+// Any inbox ticket (historical ones are read-only), audited as "cli"
 async function setStatus(id, status) {
-  const d = await api(`/api/helpdesk/sim/tickets/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ status }),
-  });
+  const { inbox, triage } = await lib();
+  if (!triage.applyChanges([id], { status }, "cli", null).length) throw new Error(`no inbox ticket ${id}`);
+  const d = inbox.getSimTicketDetail(id);
   out(d, () => `${id} is now ${d.ticket.status}`);
 }
 

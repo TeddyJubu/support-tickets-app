@@ -24,8 +24,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   return Response.json(result.detail, { status: result.status });
 }
 
-// Send status: a reply whose outcome isn't confirmed yet
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+// Send status: a reply whose outcome isn't confirmed yet (its excerpt is reply text: staff only)
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = requireStaff(request);
+  if (user instanceof Response) return user;
   const { id } = await params;
   return Response.json({ pendingSend: pendingSend(id) });
 }

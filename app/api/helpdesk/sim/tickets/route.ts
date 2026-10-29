@@ -1,4 +1,4 @@
-import { createSimTicket, getDb, getSimTicketDetail, type SimTicketInput } from "@/lib/sim-db";
+import { createSimTicket, getDb, simulatorView, type SimTicketInput } from "@/lib/sim-db";
 import { createSimReturn, type SimReturnInput } from "@/lib/returns";
 import { transaction } from "@/lib/db";
 import { isSimulatorRequest, unauthorized } from "@/lib/sim-auth";
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Simulator: open a new ticket as a (pseudonymous) customer, optionally with a simulated
-// return or exchange for its order (simReturn)
+// return or exchange for its order (simReturn). Answers with the simulator's view of it.
 export async function POST(request: Request) {
   if (!isSimulatorRequest(request)) return unauthorized();
   const body = (await request.json().catch(() => null)) as (SimTicketInput & { simReturn?: SimReturnInput }) | null;
@@ -34,5 +34,5 @@ export async function POST(request: Request) {
     if (simReturn) createSimReturn(ticketId, input.orderName!, simReturn);
     return ticketId;
   });
-  return Response.json(getSimTicketDetail(id), { status: 201 });
+  return Response.json(simulatorView(id), { status: 201 });
 }

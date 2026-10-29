@@ -456,6 +456,37 @@ export function setSimTicketStatus(ticketId: string, status: "open" | "pending" 
   return res.changes > 0 ? getSimTicketDetail(ticketId) : null;
 }
 
+/** A ticket the simulator opened for a pseudonym: never a real sender's or a staff-opened ticket */
+export function isSimulatedTicket(id: string) {
+  const r = getDb()
+    .prepare(`SELECT t.channel, c.source_key FROM sim_tickets t JOIN sim_customers c ON c.id = t.customer_id WHERE t.id = ?`)
+    .get(id) as Row | undefined;
+  return !!r && r.channel === "simulator" && !isEmailCustomer(r);
+}
+
+export interface SimulatorView {
+  ticket: Ticket;
+  customer: { firstName: string | null; name: string | null } | null;
+  messages: Array<Pick<SimMessage, "id" | "author" | "sender" | "body" | "createdAt">>;
+}
+
+/**
+ * What the simulator/CLI key may see of a ticket: simulated tickets only, and only the thread the
+ * customer sees (no internal notes, AI drafts, customer record or history). null for any other ticket.
+ */
+export function simulatorView(id: string): SimulatorView | null {
+  if (!isSimulatedTicket(id)) return null;
+  const d = getSimTicketDetail(id);
+  if (!d) return null;
+  return {
+    ticket: d.ticket,
+    customer: d.customer && { firstName: d.customer.firstName, name: d.customer.name },
+    messages: (d.messages ?? [])
+      .filter((m) => m.author === "customer" || m.author === "agent")
+      .map(({ id, author, sender, body, createdAt }) => ({ id, author, sender, body, createdAt })),
+  };
+}
+
 // Simulated tickets waiting on the customer (agent replied last) — used by the simulator for follow-ups.
 // Never real email tickets: the simulator must not answer for a real person.
 export function ticketsAwaitingCustomer(limit = 20) {
@@ -465,7 +496,7 @@ export function ticketsAwaitingCustomer(limit = 20) {
          AND t.trashed_at IS NULL AND t.spam_at IS NULL ORDER BY t.updated_at ASC LIMIT ?`,
     )
     .all(0, limit) as Row[];
-  return rows.map((r) => getSimTicketDetail(String(r.id))!);
+  return rows.map((r) => simulatorView(String(r.id))).filter((v): v is SimulatorView => v != null);
 }
 
 // Inbound email: one ticket per thread. A known Message-ID is a no-op (SNS retries);

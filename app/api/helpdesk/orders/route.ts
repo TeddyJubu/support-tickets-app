@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 // order the ticket is about. Always scoped to a ticket, so the helpdesk can't be used to
 // browse the store; simulated tickets and unverified senders get nothing.
 export async function GET(request: Request) {
-  // Staff only: the simulator/CLI key opens /api/helpdesk/* but must not read store data
+  // Staff only: store data never goes to the simulator/CLI key
   const user = requireStaff(request);
   if (user instanceof Response) return user;
   const params = new URL(request.url).searchParams;
