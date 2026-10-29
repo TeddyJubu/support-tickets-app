@@ -1,18 +1,21 @@
 // Starts the built app on a scratch data folder for the browser tests (playwright.config.ts):
-// one owner account, a few inbox tickets (one with an AI draft), and a small KB. No AI, email
-// or store credentials are passed on, so nothing can leave the machine.
+// one owner account, a few inbox tickets (one with an AI draft), and a small KB. This process
+// and the server keep only the test allow-list of variables (scripts/test-env.ts), and the
+// server can't load .env.local either, so no AI, email, store or backup credential is there
+// to reach a live service.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { nextStartEnv, scrubEnv } from "./test-env";
 
 const root = resolve(import.meta.dirname, "..");
 const port = process.env.E2E_PORT || "3399";
 const data = mkdtempSync(join(tmpdir(), "helpdesk-e2e-"));
-process.env.HELPDESK_DATA_DIR = data;
-process.env.HELPDESK_KB_DIR = join(data, "kb");
-process.env.AUTO_DRAFTS = "0";
+const vars = { HELPDESK_DATA_DIR: data, HELPDESK_KB_DIR: join(data, "kb"), AUTO_DRAFTS: "0" };
+scrubEnv();
+Object.assign(process.env, vars);
 
 const { createUser } = await import("@/lib/auth");
 const { createSimTicket, getDb } = await import("@/lib/sim-db");
@@ -40,19 +43,10 @@ writeFileSync(
 );
 await rebuildIndex("e2e");
 
-// No AI, email or store credentials: nothing can leave the machine
-const env: NodeJS.ProcessEnv = { ...process.env, HELPDESK_DATA_DIR: data, HELPDESK_KB_DIR: join(data, "kb"), AUTO_DRAFTS: "0" };
-// Next loads .env.local from the project folder but never overrides a variable that is set,
-// even to "": blank every credential, including ones only that file defines
-const SECRET = /CLOUDFLARE|AWS|SHOP_|INBOUND_|ALERT_|OUTBOUND|SIM_API_KEY/;
-let fileKeys: string[] = [];
-try {
-  fileKeys = [...readFileSync(join(root, ".env.local"), "utf8").matchAll(/^\s*([A-Z0-9_]+)\s*=/gm)].map((m) => m[1]);
-} catch {}
-for (const k of new Set([...Object.keys(env), ...fileKeys])) if (SECRET.test(k)) env[k] = "";
+// Allow-listed variables only, and none from the project's .env files (nextStartEnv)
 const child = spawn(process.execPath, [join(root, "node_modules/next/dist/bin/next"), "start", "-H", "127.0.0.1", "-p", port], {
   cwd: root,
-  env,
+  env: nextStartEnv(root, { ...vars, NEXT_TELEMETRY_DISABLED: "1" }),
   stdio: "inherit",
 });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => child.kill(signal));

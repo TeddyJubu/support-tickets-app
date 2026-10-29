@@ -12,6 +12,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadEnv } from "./env";
+import { QA_LIVE_KEYS, scrubEnv } from "./test-env";
 
 interface Scenario {
   id: string;
@@ -56,18 +57,18 @@ function rules(s: Scenario) {
   };
 }
 
-// A scratch data folder: the live drafter must never touch real data
+// A scratch data folder (the live drafter must never touch real data) and only the test
+// allow-list of variables (scripts/test-env.ts): offline sees no credential at all; --live adds
+// the Workers AI keys and the store's name from .env.local, never store, email or backup keys
 const scratch = mkdtempSync(join(tmpdir(), "helpdesk-qa-"));
+if (live) loadEnv(root);
+scrubEnv(live ? QA_LIVE_KEYS : []);
 process.env.HELPDESK_DATA_DIR = scratch;
 process.env.HELPDESK_KB_DIR = join(scratch, "kb");
 if (live) {
-  loadEnv(root);
-  for (const k of Object.keys(process.env)) if (/AWS|OUTBOUND_EMAIL|INBOUND_|ALERT_|SHOP_|SHOPIFY/.test(k)) delete process.env[k];
   const data = join(root, "data");
   if (existsSync(join(data, "kb"))) cpSync(join(data, "kb"), join(scratch, "kb"), { recursive: true });
   if (existsSync(join(data, "kb.db"))) cpSync(join(data, "kb.db"), join(scratch, "kb.db"));
-} else {
-  for (const k of Object.keys(process.env)) if (/CLOUDFLARE|AWS|SHOP_|SHOPIFY/.test(k)) delete process.env[k];
 }
 
 const { classify } = await import("@/lib/classifier/index");
