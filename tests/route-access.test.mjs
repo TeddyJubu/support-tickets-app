@@ -350,7 +350,7 @@ function run(script, args, { cwd = fileURLToPath(root), env = {} } = {}) {
 }
 const cli = (args, opts) => run("scripts/helpdesk.mjs", args, opts);
 // Read commands use the databases, not the key: a wrong key changes nothing
-const noKey = { env: { SIM_API_KEY: "wrong-key-for-reads-0123456789ab" } };
+const noKey = { env: { SIM_API_KEY: "test-wrong-key-for-reads-0123456789" } };
 
 test("CLI read commands work from the databases, without the key", async () => {
   const sim = simulated();
