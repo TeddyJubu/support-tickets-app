@@ -253,11 +253,12 @@ test("staff can't bypass review through the messages route", async () => {
   const id = simTicket();
   const r = await call(messagesRoute.POST, { method: "POST", params: { id }, headers: as(staff), body: { author: "agent", body: "sneaky" } });
   assert.equal(r.status, 409);
-  // The server CLI (bearer key) may still post a simulated reply, but never on an email ticket
+  // The server CLI (bearer key) may still post a simulated reply, but never on an email ticket:
+  // for the key, only simulated tickets exist
   const cli = { authorization: `Bearer ${process.env.SIM_API_KEY}` };
   assert.equal((await call(messagesRoute.POST, { method: "POST", params: { id }, headers: cli, body: { author: "agent", body: "from cli" } })).status, 201);
   const email = emailTicket();
-  assert.equal((await call(messagesRoute.POST, { method: "POST", params: { id: email }, headers: cli, body: { author: "agent", body: "x" } })).status, 409);
+  assert.equal((await call(messagesRoute.POST, { method: "POST", params: { id: email }, headers: cli, body: { author: "agent", body: "x" } })).status, 404);
 });
 
 test("a review can be used for one send only", async () => {

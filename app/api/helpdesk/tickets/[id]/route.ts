@@ -1,6 +1,6 @@
 import { getTicketDetail } from "@/lib/helpdesk-db";
 import { getSimTicketDetail, isSimTicketId } from "@/lib/sim-db";
-import { isAgentRequest, signInRequired, staffFromRequest } from "@/lib/request-auth";
+import { requireStaff } from "@/lib/request-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,10 +9,11 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isAgentRequest(request)) return signInRequired();
+  const user = requireStaff(request);
+  if (user instanceof Response) return user;
   const { id } = await params;
   if (isSimTicketId(id)) {
-    const detail = getSimTicketDetail(id, staffFromRequest(request)?.id ?? 0);
+    const detail = getSimTicketDetail(id, user.id);
     if (!detail) return Response.json({ error: "Ticket not found" }, { status: 404 });
     return Response.json(detail);
   }

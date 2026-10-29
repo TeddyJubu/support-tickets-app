@@ -14,7 +14,8 @@
 //   --dry-run        print what would be sent without writing anything
 //
 // Reads .env.local: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CF_MODEL (Workers AI),
-// SIM_API_KEY, SIM_HELPDESK_URL (default http://127.0.0.1:3100).
+// SIM_API_KEY, SIM_HELPDESK_URL (default http://127.0.0.1:3100), HELPDESK_DATA_DIR (default data/).
+// The key opens only the simulator's endpoints, and those only for simulated tickets.
 //
 // Simulated customers have no orders: the store is the real Shopify store, which the
 // simulator never writes to, and the helpdesk shows no store data for simulated tickets.
@@ -59,6 +60,8 @@ const { values: args } = parseArgs({
 });
 
 const HELPDESK = (env.SIM_HELPDESK_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+// Same data folder as the app (lib/db.ts): tests point HELPDESK_DATA_DIR at a scratch folder
+const DATA = env.HELPDESK_DATA_DIR || join(root, "data");
 const MODEL = env.CF_MODEL || "@cf/zai-org/glm-5.3-flash";
 const dryRun = args["dry-run"];
 
@@ -69,7 +72,7 @@ for (const key of ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "SIM_API_KEY
   }
 }
 
-const history = new DatabaseSync(join(root, "data/helpdesk.db"), { readOnly: true });
+const history = new DatabaseSync(join(DATA, "helpdesk.db"), { readOnly: true });
 
 // ------------------------------------------------------------- pseudonyms
 const FIRST = ["Ava", "Mia", "Leah", "Noa", "Sara", "Tova", "Rina", "Dina", "Esti", "Gila", "Hana", "Ilana",
@@ -293,7 +296,7 @@ async function runNewTickets(count, runId) {
 // -------------------------------------------------------------------- main
 async function main() {
   if (args.reset) {
-    const sim = new DatabaseSync(join(root, "data/sim.db"));
+    const sim = new DatabaseSync(join(DATA, "sim.db"));
     const { tickets, customers, kept } = resetSimulated(sim);
     sim.close();
     console.log(`Deleted ${tickets} simulated tickets and ${customers} simulated customers. Kept ${kept} email and staff tickets.`);

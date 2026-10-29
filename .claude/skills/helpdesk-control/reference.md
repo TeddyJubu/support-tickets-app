@@ -18,11 +18,12 @@ systemd "support-tickets-worker" (scripts/worker.ts)
    every minute: owner alerts, ops monitor; 6 h: encrypted backups → data/backups/ → bucket (BACKUP_S3_URL); daily: product sync, learning, pruning
 systemd timer "support-tickets-heartbeat" (scripts/heartbeat-check.ts): emails if the worker stops
 
-scripts/simulate.mjs ──▶ /api/helpdesk/sim/* (bearer key: opens tickets; no store data)
+scripts/simulate.mjs ──▶ /api/helpdesk/sim/tickets, …/messages, /awaiting (bearer key: simulated tickets only)
+scripts/helpdesk.mjs ──▶ data/ directly (reply/customer: the simulator's messages endpoint, bearer key)
 ```
 
 - **App**: Next.js 16, TypeScript, `node:sqlite` (Node 22+). `lib/db.ts` opens each database once per process and applies `lib/sim-migrations.ts` on open.
-- **Sign-in**: `lib/auth.ts` (PBKDF2 passwords, session tokens stored as SHA-256, 12 h idle / 7 day max, login rate limit). `proxy.ts` gates everything except `/login`, `/api/auth/login`, `/api/health`, `/api/ready` and the SES webhook. The simulator/CLI bearer key (`SIM_API_KEY`) only opens `/api/helpdesk/*`. Cookie-authenticated writes need a same-site `Origin`.
+- **Sign-in**: `lib/auth.ts` (PBKDF2 passwords, session tokens stored as SHA-256, 12 h idle / 7 day max, login rate limit). `proxy.ts` gates everything except `/login`, `/api/auth/login`, `/api/health`, `/api/ready` and the SES webhook. The simulator/CLI bearer key (`SIM_API_KEY`) opens only the simulator's endpoints (`SIMULATOR` in `proxy.ts`), and those refuse any ticket the simulator didn't open (`isSimulatedTicket`: channel `simulator`, pseudonymous customer) and answer with `simulatorView` (the ticket and its customer/agent messages: no notes, drafts, customer record or history). Every other `/api/helpdesk` route is staff-only (`requireStaff`); `tests/route-access.test.mjs` checks each one for a staff session, the key and nobody. Cookie-authenticated writes need a same-site `Origin`.
 - **Inbox**: views, filters, bulk actions, notes, attachments (`data/attachments/`, content-addressed), snooze, read state: `lib/sim-db.ts`, `lib/triage.ts`.
 - **AI drafts**: every customer message is triaged by the escalate-only classifier (`lib/classifier/`) and queued (`lib/drafting/queue.ts`) in the same transaction. The worker drafts with Workers AI and read-only tools (`lib/drafting/run.ts`, `tools.ts`), cleans the result (`cleaner.ts`) and saves it for review. A newer customer message supersedes waiting jobs and unused drafts; a staff reply skips waiting jobs, and a job already running doesn't save its draft.
 - **Sending**: `lib/sending.ts`. Read & write grant (30 min, per session) → review (recipient, subject, answered message, exact text) → confirm with an idempotency key. A newer customer message, a reply anyone sent since, or a changed text, recipient or subject cancels the review. Unconfirmed sends block new replies until staff settle them; one the email service accepted (it has a Message-ID) can only be recorded as sent.
@@ -40,7 +41,7 @@ scripts/simulate.mjs ──▶ /api/helpdesk/sim/* (bearer key: opens tickets; n
 | `POST /api/helpdesk/tickets` | staff open an email ticket for a customer |
 | `GET /api/helpdesk/tickets/{id}` | ticket, customer, messages, attachments, AI draft state, pending send |
 | `PATCH /api/helpdesk/sim/tickets/{id}`, `POST /api/helpdesk/sim/tickets/bulk` | triage one / many (status, priority, assigneeId, tags, snoozedUntil, read, trashed, spam, subject) |
-| `POST /api/helpdesk/sim/tickets/{id}/messages` | internal notes (staff); simulated replies (CLI bearer only); customer messages (simulator) |
+| `POST /api/helpdesk/sim/tickets/{id}/messages` | internal notes (staff); simulated replies and customer messages (bearer key, simulated tickets only) |
 | `POST /api/helpdesk/send-access` `{enable}` | Read & write on/off |
 | `POST /api/helpdesk/tickets/{id}/send/review` → `POST .../send` | review, then confirm `{body, reviewToken, idempotencyKey}` |
 | `GET .../send`, `POST .../send/resolve` `{key, outcome}` | unconfirmed send status; settle it (`sent` / `not_sent`) |
@@ -56,7 +57,7 @@ scripts/simulate.mjs ──▶ /api/helpdesk/sim/* (bearer key: opens tickets; n
 | `GET /api/alerts`, `POST /api/alerts/{id}/retry`, `POST /api/alerts/test` | owner alert log |
 | `GET/POST /api/notifications` | the bell |
 | `GET /api/overview` | Overview page data |
-| `POST /api/helpdesk/sim/tickets` (bearer), `GET /api/helpdesk/sim/awaiting` (bearer) | simulator |
+| `POST /api/helpdesk/sim/tickets` (bearer), `GET /api/helpdesk/sim/awaiting` (bearer) | simulator: open a simulated ticket; simulated tickets waiting on the customer (both answer with `simulatorView`) |
 | `POST /api/helpdesk/inbound/ses?token=` | public, own token: SES → SNS inbound email |
 | `POST /api/chat` | copilot runtime |
 
@@ -69,7 +70,7 @@ Ticket status: a customer message sets `open` (and wakes a snooze), an agent rep
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | Workers AI (copilot, drafter, embeddings) |
 | `CF_MODEL` (optional) | chat/draft model, default `@cf/zai-org/glm-5.3-flash` |
 | `STORE_NAME`, `STORE_DESCRIPTION`, `SUPPORT_EMAIL`, `SENDER_NAME` | this install's store (`lib/settings.ts`): the name in the UI, the copilot/draft/rewrite prompts and alert emails, the support address, and the sign-off and email display name. Defaults are the demo install's (Cute Things); set them for every new store. The copilot's instructions are built on the server (`app/api/chat/route.ts`); the browser only sends the open ticket's context |
-| `SIM_API_KEY` | simulator and CLI bearer key |
+| `SIM_API_KEY` | simulator bearer key (also the CLI's `reply` and `customer`): opens the simulator's endpoints only, for simulated tickets only |
 | `SIM_HELPDESK_URL` (optional) | helpdesk base URL for scripts, default `http://127.0.0.1:3100` |
 | `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | the Dev Dashboard app's credentials (scopes `read_customers`, `read_orders`; protected customer data: name and email; redirect, App and webhook URLs as Settings shows them). With these an owner connects a store in Settings |
 | `SHOPIFY_SCOPES` (optional) | extra read scopes, e.g. `read_all_orders` for orders older than 60 days |
@@ -154,7 +155,7 @@ Email that arrived after the backup isn't in the restored database. SES also wri
 | Backups failing | `npm run helpdesk -- ops`; "No backup certificate" → `backup-setup` (the user then moves the private key off the server) |
 | `status` says service inactive | `npm run helpdesk -- logs 100`, then `sudo systemctl restart support-tickets` |
 | simulator: `Workers AI` errors / slow | model quota or outage; try `--count 1`, or set `CF_MODEL` |
-| everything returns 401 / redirects to `/login` | expected without a session; the CLI needs `SIM_API_KEY` in `.env.local` |
+| everything returns 401 / redirects to `/login` | expected without a session. The key gets 401 everywhere but the simulator's endpoints; the CLI reads `data/` directly, and only `reply`/`customer` and the simulator need `SIM_API_KEY` in `.env.local` |
 | UI doesn't show new SIM tickets | the Simulated tab polls every 10 s; confirm with `npm run helpdesk -- tickets` |
 | `offsiteBackups` failing: "local only" or "upload failed" | `grep -c '^BACKUP_S3_' .env.local` should be 3 or more (restart the worker after adding them); `npm run helpdesk -- backup` shows the upload error (a 403 means the token isn't scoped to this bucket with Object Read & Write) |
 | site down after a reboot | `systemctl status svvi-caddy support-tickets`; both are enabled and should start at boot |

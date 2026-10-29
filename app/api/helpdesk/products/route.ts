@@ -1,11 +1,12 @@
 import { getProduct, isProductHandle, searchProducts } from "@/lib/helpdesk-db";
-import { isAgentRequest, signInRequired } from "@/lib/request-auth";
+import { requireStaff } from "@/lib/request-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  if (!isAgentRequest(request)) return signInRequired();
+  const user = requireStaff(request);
+  if (user instanceof Response) return user;
   const url = new URL(request.url);
   // Catalog facts only (title, price, sizes, stock): no customer or order data
   const handle = url.searchParams.get("handle");

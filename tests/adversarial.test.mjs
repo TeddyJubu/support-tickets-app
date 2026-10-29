@@ -47,7 +47,7 @@ test("a forged or foreign session cookie doesn't open anything", () => {
   }
 });
 
-test("the simulator/CLI key reaches only /api/helpdesk, and not the staff-only actions there", async () => {
+test("the simulator/CLI key reaches nothing outside /api/helpdesk, and not the staff-only actions there", async () => {
   const bearer = { authorization: `Bearer ${process.env.SIM_API_KEY}` };
   for (const path of routes()) {
     if (PUBLIC.has(path) || path.startsWith("/api/helpdesk/")) continue;
